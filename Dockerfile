@@ -25,7 +25,7 @@ COPY .sqlx .sqlx
 COPY keyway keyway
 COPY keyway-cli keyway-cli
 ENV SQLX_OFFLINE=true
-RUN touch keyway/src/main.rs && cargo build --release --bin keyway-server
+RUN touch keyway/src/main.rs keyway/src/lib.rs && cargo build --release --bin keyway-server
 
 FROM debian:trixie-slim
 RUN apt-get update \

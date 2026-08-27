@@ -20,7 +20,9 @@ services:
       timeout: 3s
       retries: 15
     volumes:
-      - keyway-data:/var/lib/postgresql/data
+      # postgres:18+ keeps data in a version-specific subdirectory, so the
+      # mount goes at /var/lib/postgresql, not .../data.
+      - keyway-data:/var/lib/postgresql
 
   migrate:
     build: .
