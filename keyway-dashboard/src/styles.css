@@ -1,0 +1,294 @@
+/* Everything is a custom property from the start.
+ *
+ * Branding today is four values from /api/me (#19). Exposing a full theme
+ * later is then additive — adding properties — rather than a rewrite. Class
+ * names are deliberately NOT an override surface: every one would become a
+ * compatibility promise nobody could rename. */
+
+:root {
+  --kw-accent: #6b4eff;
+  --kw-accent-text: #ffffff;
+
+  --kw-bg: #fbfbfd;
+  --kw-surface: #ffffff;
+  --kw-border: #e3e3ea;
+  --kw-text: #1a1a22;
+  --kw-muted: #6b6b7b;
+  --kw-danger: #c0362c;
+  --kw-warning: #8a6100;
+  --kw-warning-bg: #fff8e6;
+
+  --kw-radius: 8px;
+  --kw-gap: 16px;
+  --kw-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --kw-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --kw-bg: #131318;
+    --kw-surface: #1c1c23;
+    --kw-border: #2f2f3a;
+    --kw-text: #ececf2;
+    --kw-muted: #9a9aad;
+    --kw-danger: #ff6b5e;
+    --kw-warning: #f0c46a;
+    --kw-warning-bg: #2a2413;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--kw-bg);
+  color: var(--kw-text);
+  font-family: var(--kw-sans);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid var(--kw-border);
+  background: var(--kw-surface);
+  color: var(--kw-text);
+  border-radius: var(--kw-radius);
+  padding: 6px 12px;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--kw-accent);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.primary {
+  background: var(--kw-accent);
+  border-color: var(--kw-accent);
+  color: var(--kw-accent-text);
+}
+
+button.danger {
+  color: var(--kw-danger);
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  padding: 6px 10px;
+  border: 1px solid var(--kw-border);
+  border-radius: var(--kw-radius);
+  background: var(--kw-surface);
+  color: var(--kw-text);
+  width: 100%;
+}
+
+textarea {
+  font-family: var(--kw-mono);
+  min-height: 120px;
+  resize: vertical;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  min-height: 100vh;
+}
+
+.sidebar {
+  border-right: 1px solid var(--kw-border);
+  padding: var(--kw-gap);
+  background: var(--kw-surface);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 650;
+  margin-bottom: 20px;
+}
+
+.brand img {
+  width: 24px;
+  height: 24px;
+}
+
+.brand .dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--kw-accent);
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav button {
+  border: none;
+  background: none;
+  text-align: left;
+  padding: 7px 10px;
+}
+
+.nav button[aria-current="page"] {
+  background: color-mix(in srgb, var(--kw-accent) 12%, transparent);
+  color: var(--kw-accent);
+  font-weight: 600;
+}
+
+.main {
+  padding: 24px 28px;
+  max-width: 1100px;
+}
+
+h1 {
+  font-size: 20px;
+  margin: 0 0 4px;
+}
+
+h2 {
+  font-size: 15px;
+  margin: 24px 0 8px;
+}
+
+.muted {
+  color: var(--kw-muted);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.card {
+  border: 1px solid var(--kw-border);
+  border-radius: var(--kw-radius);
+  background: var(--kw-surface);
+  padding: 14px 16px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th {
+  text-align: left;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--kw-muted);
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--kw-border);
+}
+
+td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--kw-border);
+}
+
+tr.clickable:hover td {
+  background: color-mix(in srgb, var(--kw-accent) 6%, transparent);
+  cursor: pointer;
+}
+
+code,
+.mono {
+  font-family: var(--kw-mono);
+  font-size: 12.5px;
+}
+
+.tag {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--kw-border);
+  font-size: 12px;
+  color: var(--kw-muted);
+}
+
+.tag.level {
+  border-color: color-mix(in srgb, var(--kw-accent) 40%, var(--kw-border));
+  color: var(--kw-accent);
+}
+
+/* A secret a reconciler owns. Shown, never editable — hiding it would be
+ * worse than refusing the edit. */
+.tag.locked {
+  border-color: color-mix(in srgb, var(--kw-warning) 45%, var(--kw-border));
+  color: var(--kw-warning);
+}
+
+.warning {
+  background: var(--kw-warning-bg);
+  border: 1px solid color-mix(in srgb, var(--kw-warning) 35%, var(--kw-border));
+  color: var(--kw-warning);
+  border-radius: var(--kw-radius);
+  padding: 10px 12px;
+  margin: 10px 0;
+}
+
+.error {
+  color: var(--kw-danger);
+  margin: 10px 0;
+}
+
+.value {
+  font-family: var(--kw-mono);
+  background: var(--kw-bg);
+  border: 1px solid var(--kw-border);
+  border-radius: var(--kw-radius);
+  padding: 10px 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+
+.modal {
+  background: var(--kw-surface);
+  border-radius: var(--kw-radius);
+  border: 1px solid var(--kw-border);
+  padding: 20px;
+  width: min(560px, 100%);
+  max-height: 90vh;
+  overflow: auto;
+}
+
+.field {
+  margin-bottom: 12px;
+}
+
+.field label {
+  display: block;
+  font-size: 12px;
+  color: var(--kw-muted);
+  margin-bottom: 4px;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}

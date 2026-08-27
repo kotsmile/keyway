@@ -26,7 +26,7 @@ git clone https://github.com/kotsmile/keyway && cd keyway
 docker compose up
 ```
 
-Then open <http://localhost:8080>. The quickstart runs with **no authentication**
+Then open <http://localhost:8081> for the console; the API is on `:8080`. The quickstart runs with **no authentication**
 and acts as a dev user; see [Authentication](#authentication) before pointing it
 at anything real.
 
@@ -163,9 +163,13 @@ declares, so the rules are testable with no database and no network.
 
 ## Status
 
-Early. The own store works end to end; the cloud adapters, the browser session
-and the console are in progress — see the
-[issues](https://github.com/kotsmile/keyway/issues).
+Early, but complete end to end: the own store, the HTTP API, API tokens, the
+audit log, the External Secrets contract, the CLI, OIDC sign-in and the console
+are all built and working.
+
+The four cloud adapters — GCP, Yandex Lockbox, AWS and Kubernetes — are written
+and unit-tested against recorded response shapes, but **have not been run
+against a real backend**. Point one at a sandbox project before trusting it.
 
 ## Licence
 

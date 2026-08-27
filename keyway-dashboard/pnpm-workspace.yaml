@@ -1,0 +1,4 @@
+# esbuild's postinstall fetches the platform binary; vite cannot run without
+# it. Nothing else here is allowed to run install scripts.
+allowBuilds:
+  esbuild: true

@@ -52,5 +52,12 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  dashboard:
+    build: ./keyway-dashboard
+    ports:
+      - "8081:8081"
+    depends_on:
+      - keyway
+
 volumes:
   keyway-data:
