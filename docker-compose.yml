@@ -1,0 +1,56 @@
+# keyway, runnable with no cloud account.
+#
+# Uses keyway's own encrypted store, which is the whole reason that backend
+# exists. The key below is a fixed development one and is in this file
+# deliberately: a quickstart that asks somebody to generate a key before the
+# first screen is a quickstart nobody finishes.
+#
+#   DO NOT DEPLOY THIS. It authenticates nobody and its key is public.
+
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: keyway
+      POSTGRES_PASSWORD: keyway
+      POSTGRES_DB: keyway
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keyway"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    volumes:
+      - keyway-data:/var/lib/postgresql/data
+
+  migrate:
+    build: .
+    command: ["--config", "/etc/keyway/config.yml", "migrate"]
+    environment:
+      PGPASSWORD: keyway
+      KEYWAY_KEY: AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=
+    volumes:
+      - ./deploy/quickstart.yml:/etc/keyway/config.yml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  keyway:
+    build: .
+    command: ["--config", "/etc/keyway/config.yml", "serve"]
+    environment:
+      PGPASSWORD: keyway
+      KEYWAY_KEY: AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=
+      RUST_LOG: info,keyway=debug
+    ports:
+      - "8080:8080"
+      # The metrics port, separate from the API's. In a real deployment this
+      # stays on the cluster network.
+      - "9090:9090"
+    volumes:
+      - ./deploy/quickstart.yml:/etc/keyway/config.yml:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  keyway-data:
