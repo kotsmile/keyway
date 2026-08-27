@@ -182,9 +182,15 @@ fn random_b64(bytes: usize) -> Result<String, Error> {
 }
 
 fn random_hex(bytes: usize) -> Result<String, Error> {
+    use std::fmt::Write as _;
     let mut raw = vec![0_u8; bytes];
     getrandom::fill(&mut raw).map_err(|e| Error::Rng(e.to_string()))?;
-    Ok(raw.iter().map(|b| format!("{b:02x}")).collect())
+    Ok(raw
+        .iter()
+        .fold(String::with_capacity(bytes * 2), |mut out, b| {
+            let _ = write!(out, "{b:02x}");
+            out
+        }))
 }
 
 #[cfg(test)]
