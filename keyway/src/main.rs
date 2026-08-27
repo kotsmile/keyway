@@ -13,7 +13,7 @@ use keyway::domains::identity::entity::Role;
 use keyway::domains::identity::infra::{KeycloakDirectory, Oidc, PostgresIdentityRepo};
 use keyway::domains::secrets::OwnStoreService;
 use keyway::domains::secrets::entity::{Keyring, Registry, SecretManager, Store};
-use keyway::domains::secrets::infra::PostgresOwnStoreRepo;
+use keyway::domains::secrets::infra::{GcpSecretManager, PostgresOwnStoreRepo};
 use keyway::domains::tokens::TokenService;
 use keyway::domains::tokens::infra::PostgresTokenRepo;
 use keyway::infra::{postgres, telemetry};
@@ -116,7 +116,7 @@ async fn serve(
         Some(Arc::new(Oidc::discover(&config.oidc).await?))
     };
 
-    let stores = Arc::new(mount_stores(&config, &pool)?);
+    let stores = Arc::new(mount_stores(&config, &pool).await?);
     tracing::info!(count = stores.len(), "stores mounted");
 
     let cookie_key = session_key(&config)?;
@@ -224,18 +224,30 @@ fn normalise(address: &str) -> String {
 /// A Store whose adapter this build does not know is worth refusing to start
 /// over: silently serving four of five declared Stores is worse than not
 /// starting, because nobody notices the fifth is missing.
-fn mount_stores(config: &Config, pool: &sqlx::PgPool) -> eyre::Result<Registry> {
+async fn mount_stores(config: &Config, pool: &sqlx::PgPool) -> eyre::Result<Registry> {
     let mut mounted = Vec::new();
     for declared in &config.stores {
+        let setting = |name: &str| {
+            declared
+                .settings
+                .get(name)
+                .and_then(|v| v.as_str())
+                .map(ToOwned::to_owned)
+        };
         let manager: Box<dyn SecretManager> = match declared.kind.as_str() {
             "keyway" => Box::new(OwnStoreService::new(
                 &declared.id,
                 Arc::new(PostgresOwnStoreRepo::new(pool.clone())),
                 keyring_for(declared)?,
             )),
+            "gcp" => {
+                let project = setting("project")
+                    .ok_or_else(|| eyre::eyre!("store {:?} needs a `project`", declared.id))?;
+                Box::new(GcpSecretManager::new(project).await?)
+            }
             other => {
                 return Err(eyre::eyre!(
-                    "store {:?} names an unknown type {other:?}; this build has: keyway",
+                    "store {:?} names an unknown type {other:?}; this build has: keyway, gcp",
                     declared.id
                 ));
             }
