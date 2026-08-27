@@ -11,7 +11,9 @@ name = "keyway-server"
 path = "src/main.rs"
 
 [dependencies]
-keyway-core.workspace = true
+serde = { version = "1.0.229", features = ["derive"] }
+serde_norway = "0.9.42"
+thiserror = "2.0.20"
 
 [lints]
 workspace = true

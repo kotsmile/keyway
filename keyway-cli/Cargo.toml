@@ -6,12 +6,14 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+# Deliberately does not depend on `keyway`. The CLI speaks the HTTP API and
+# defines its own wire types; depending on the backend would compile the whole
+# server — database driver, cloud SDKs and all — into a binary that formats
+# output.
+
 [[bin]]
 name = "keyway"
 path = "src/main.rs"
-
-[dependencies]
-keyway-core.workspace = true
 
 [lints]
 workspace = true
