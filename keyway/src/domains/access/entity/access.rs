@@ -9,7 +9,8 @@
 //! far" has to be answerable by reading one list, and that is only true if
 //! every code path asks the same question the same way.
 
-use crate::domain::{Actor, Delegation, Level, Ownership};
+use super::{Delegation, Level, Ownership};
+use crate::domains::identity::entity::Actor;
 use chrono::{DateTime, Utc};
 
 /// What a caller may do with one secret, and why.
@@ -129,4 +130,5 @@ pub fn resolve(
 }
 
 #[cfg(test)]
+#[path = "access_tests.rs"]
 mod tests;

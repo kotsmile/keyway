@@ -1,4 +1,4 @@
-use crate::domain::{Metadata, Secret, Version};
+use super::{Metadata, Secret, Version};
 use async_trait::async_trait;
 
 /// One backend's driver — the seam that makes keyway an aggregator rather than

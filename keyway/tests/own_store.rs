@@ -7,10 +7,13 @@
 
 mod support;
 
-use keyway::domain::{Metadata, VersionState};
-use keyway::store::keyway::{Keyring, OwnStore};
-use keyway::store::{BackendError, SecretManager};
+use keyway::domains::secrets::OwnStoreService;
+use keyway::domains::secrets::entity::{
+    BackendError, Keyring, Metadata, SecretManager, VersionState,
+};
+use keyway::domains::secrets::infra::PostgresOwnStoreRepo;
 use sqlx::PgPool;
+use std::sync::Arc;
 
 /// 32 bytes of base64, distinct so a test can tell which one opened a payload.
 const KEY_V1: &str = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=";
@@ -25,11 +28,21 @@ fn keyring(active: &str, keys: &[(&str, &str)]) -> Keyring {
     .expect("a valid keyring")
 }
 
-fn store(pool: &PgPool, active: &str, keys: &[(&str, &str)]) -> OwnStore {
-    OwnStore::new("local", pool.clone(), keyring(active, keys))
+type Store = OwnStoreService<PostgresOwnStoreRepo>;
+
+fn mounted(pool: &PgPool, id: &str, active: &str, keys: &[(&str, &str)]) -> Store {
+    Store::new(
+        id,
+        Arc::new(PostgresOwnStoreRepo::new(pool.clone())),
+        keyring(active, keys),
+    )
 }
 
-async fn with_secret(store: &OwnStore, name: &str, payload: &[u8]) {
+fn store(pool: &PgPool, active: &str, keys: &[(&str, &str)]) -> Store {
+    mounted(pool, "local", active, keys)
+}
+
+async fn with_secret(store: &Store, name: &str, payload: &[u8]) {
     store.create(name, Metadata::new()).await.expect("create");
     store.add_version(name, payload).await.expect("add version");
 }
@@ -183,8 +196,8 @@ async fn two_stores_of_the_same_type_do_not_see_each_other() {
     let Some(pool) = support::pool().await else {
         return;
     };
-    let real = OwnStore::new("local", pool.clone(), keyring("v1", &[("v1", KEY_V1)]));
-    let sandbox = OwnStore::new("sandbox", pool.clone(), keyring("v1", &[("v1", KEY_V1)]));
+    let real = mounted(&pool, "local", "v1", &[("v1", KEY_V1)]);
+    let sandbox = mounted(&pool, "sandbox", "v1", &[("v1", KEY_V1)]);
 
     with_secret(&real, "db-creds", b"hunter2").await;
 

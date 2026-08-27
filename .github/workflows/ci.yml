@@ -7,6 +7,10 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Queries are checked against the committed .sqlx cache, so a build needs no
+  # database. `cargo sqlx prepare` regenerates it; a query changed without
+  # regenerating fails here rather than at runtime.
+  SQLX_OFFLINE: true
 
 jobs:
   rust:

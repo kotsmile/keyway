@@ -4,9 +4,11 @@
 //! way a future adapter could quietly do the wrong thing if the fence were in
 //! the adapter rather than here.
 
-use super::{BackendError, Registry, SecretManager, Store, StoreError};
+use super::{
+    BackendError, Metadata, Registry, Secret, SecretManager, Store, StoreError, Version,
+    VersionState,
+};
 use crate::config::StoreConfig;
-use crate::domain::{Metadata, Secret, Version, VersionState};
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
 

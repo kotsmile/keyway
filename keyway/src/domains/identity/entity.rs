@@ -1,4 +1,5 @@
-use super::{Level, Subject};
+use crate::domains::access::entity::{Level, Subject};
+use chrono::{DateTime, Utc};
 use std::collections::BTreeSet;
 
 /// Who is asking.
@@ -123,7 +124,7 @@ impl Actor {
 
     /// The highest level this caller holds anywhere.
     ///
-    /// Never an answer about a particular secret — that is [`crate::authz`] —
+    /// Never an answer about a particular secret — that is [`crate::domains::access`] —
     /// only what an account badge says. Two people with the same badge may
     /// hold nothing in common.
     #[must_use]
@@ -134,4 +135,17 @@ impl Actor {
             None
         }
     }
+}
+
+/// What keyway remembers about a person between sign-ins.
+///
+/// The groups claim as it stood at their last sign-in, so an API token — which
+/// carries no claim of its own — can act as its holder in full (ADR-0004).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RememberedUser {
+    pub handle: String,
+    pub groups: Vec<String>,
+    pub email: String,
+    pub name: String,
+    pub last_login: DateTime<Utc>,
 }

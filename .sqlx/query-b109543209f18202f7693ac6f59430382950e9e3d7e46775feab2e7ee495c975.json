@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO ownership (store, secret, owner, since)\n             VALUES ($1, $2, $3, $4)\n             ON CONFLICT (store, secret) DO UPDATE SET\n                 owner = EXCLUDED.owner,\n                 since = EXCLUDED.since",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b109543209f18202f7693ac6f59430382950e9e3d7e46775feab2e7ee495c975"
+}

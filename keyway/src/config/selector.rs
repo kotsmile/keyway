@@ -1,4 +1,4 @@
-use crate::domain::Metadata;
+use crate::domains::secrets::entity::Metadata;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 

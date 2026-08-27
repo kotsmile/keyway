@@ -1,5 +1,6 @@
 use super::{Basis, resolve};
-use crate::domain::{Actor, Delegation, Level, Ownership, Role, Subject};
+use crate::domains::access::entity::{Delegation, Level, Ownership, Subject};
+use crate::domains::identity::entity::{Actor, Role};
 use chrono::{DateTime, TimeZone, Utc};
 use uuid::Uuid;
 

@@ -1,16 +1,7 @@
-//! Configured backing services, and the seam behind them.
+//! One configured backing service, and the fence around it.
 
-pub mod keyway;
-mod manager;
-mod registry;
-#[cfg(test)]
-mod tests;
-
-pub use manager::{BackendError, SecretManager};
-pub use registry::{Registry, RegistryError};
-
+use super::{BackendError, Metadata, Secret, SecretManager, Version};
 use crate::config::{Selector, StoreConfig, Verb};
-use crate::domain::{Metadata, Secret, Version};
 
 /// One configured backing service: a [`SecretManager`] with the scope, the
 /// verbs and the protections its declaration gave it.

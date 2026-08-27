@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO delegations\n                (id, store, secret, subject_kind, subject_id, level, keys,\n                 granted_by, granted_at, expires_at, note)\n             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)\n             ON CONFLICT (store, secret, subject_kind, subject_id) DO UPDATE SET\n                 level = EXCLUDED.level,\n                 keys = EXCLUDED.keys,\n                 granted_by = EXCLUDED.granted_by,\n                 granted_at = EXCLUDED.granted_at,\n                 expires_at = EXCLUDED.expires_at,\n                 note = EXCLUDED.note",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "TextArray",
+        "Text",
+        "Timestamptz",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0cf30253b1dfcc90ddc4996f9b04e28e365a66f348ec6cdcac353bf1d492b6d9"
+}
