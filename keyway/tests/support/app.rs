@@ -60,6 +60,7 @@ pub async fn start(pool: PgPool, handle: &str, roles: &[Role], groups: &[&str]) 
         None,
     ));
 
+    let cookie_key = axum_extra::extract::cookie::Key::generate();
     let state = AppState {
         stores: Arc::new(registry),
         access: Arc::new(AccessService::new(Arc::new(PostgresAccessRepo::new(
@@ -78,8 +79,12 @@ pub async fn start(pool: PgPool, handle: &str, roles: &[Role], groups: &[&str]) 
                 roles: roles.to_vec(),
                 groups: groups.iter().map(|g| (*g).to_owned()).collect(),
             }),
+            cookie_key: cookie_key.clone(),
         }),
         branding: Arc::new(keyway::config::Branding::default()),
+        oidc: None,
+        session_hours: 8,
+        cookie_key,
     };
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

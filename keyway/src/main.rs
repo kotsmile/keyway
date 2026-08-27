@@ -1,6 +1,7 @@
 //! The keyway backend.
 
 use clap::{Parser, Subcommand};
+use eyre::Context as _;
 use keyway::config::{Config, StoreConfig};
 use keyway::container;
 use keyway::domains::access::AccessService;
@@ -9,7 +10,7 @@ use keyway::domains::audit::AuditService;
 use keyway::domains::audit::infra::PostgresAuditRepo;
 use keyway::domains::identity::IdentityService;
 use keyway::domains::identity::entity::Role;
-use keyway::domains::identity::infra::PostgresIdentityRepo;
+use keyway::domains::identity::infra::{KeycloakDirectory, Oidc, PostgresIdentityRepo};
 use keyway::domains::secrets::OwnStoreService;
 use keyway::domains::secrets::entity::{Keyring, Registry, SecretManager, Store};
 use keyway::domains::secrets::infra::PostgresOwnStoreRepo;
@@ -83,20 +84,47 @@ async fn serve(
     let tokens: container::Tokens = Arc::new(TokenService::new(Arc::new(PostgresTokenRepo::new(
         pool.clone(),
     ))));
-    // No Directory yet (#9): without one, a token's groups are what keyway
-    // remembered at its holder's last sign-in.
+    // Without a Directory, a token's groups are what keyway remembered at its
+    // holder's last sign-in, and deleting a token is the only revocation.
+    let directory: Option<Arc<dyn keyway::domains::identity::Directory>> =
+        match config.oidc.directory.as_str() {
+            "" => None,
+            "keycloak" => Some(Arc::new(KeycloakDirectory::new(
+                &config.oidc.issuer,
+                &config.oidc.client_id,
+                &config.oidc.client_secret,
+            )?)),
+            other => {
+                return Err(eyre::eyre!(
+                    "oidc.directory names an unknown kind {other:?}; this build has: keycloak"
+                ));
+            }
+        };
+    if directory.is_some() {
+        tracing::info!("directory configured; token holders are checked live");
+    }
     let identity: container::Identity = Arc::new(IdentityService::new(
         Arc::new(PostgresIdentityRepo::new(pool.clone())),
-        None,
+        directory,
     ));
+
+    // Discovered at boot: a console that only reaches its issuer when somebody
+    // tries to sign in is one that looks healthy while being unusable.
+    let oidc = if config.oidc.issuer.is_empty() {
+        None
+    } else {
+        Some(Arc::new(Oidc::discover(&config.oidc).await?))
+    };
 
     let stores = Arc::new(mount_stores(&config, &pool)?);
     tracing::info!(count = stores.len(), "stores mounted");
 
+    let cookie_key = session_key(&config)?;
+
     // Dev mode is on precisely when no issuer is configured. Every
     // authorisation decision is still made, so a local run behaves like
     // production minus the redirect.
-    let dev = config.oidc.issuer.is_empty().then(|| DevActor {
+    let dev = oidc.is_none().then(|| DevActor {
         handle: if config.oidc.dev_user.is_empty() {
             "dev".to_owned()
         } else {
@@ -127,8 +155,12 @@ async fn serve(
             tokens,
             identity,
             dev,
+            cookie_key: cookie_key.clone(),
         }),
         branding: Arc::new(config.branding.clone()),
+        oidc,
+        session_hours: config.oidc.session_hours,
+        cookie_key,
     };
 
     let api = tokio::net::TcpListener::bind(normalise(&config.server.address)).await?;
@@ -148,6 +180,33 @@ async fn serve(
 
     tokio::try_join!(api.into_future(), metrics.into_future())?;
     Ok(())
+}
+
+/// The key the session cookie is encrypted under.
+///
+/// Generated when unset, which is right for a single-replica dev run and wrong
+/// for anything else — several replicas each generating their own means a
+/// session minted by one is unreadable by the next, so this warns loudly.
+fn session_key(config: &Config) -> eyre::Result<axum_extra::extract::cookie::Key> {
+    use base64::Engine as _;
+
+    if config.oidc.session_key.is_empty() {
+        tracing::warn!(
+            "no oidc.session_key configured; generating one. \
+             Sessions will not survive a restart, and replicas will not share them."
+        );
+        return Ok(axum_extra::extract::cookie::Key::generate());
+    }
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(config.oidc.session_key.trim())
+        .wrap_err("oidc.session_key is not base64")?;
+    if raw.len() < 64 {
+        eyre::bail!(
+            "oidc.session_key decodes to {} bytes; at least 64 are needed",
+            raw.len()
+        );
+    }
+    Ok(axum_extra::extract::cookie::Key::from(&raw))
 }
 
 /// `:8080` is how a config spells "every interface", which is not an address

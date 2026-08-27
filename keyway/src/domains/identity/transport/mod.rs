@@ -1,1 +1,3 @@
-//! How identity is reached. Sessions land here (#5).
+//! Signing in and out.
+
+pub mod http;

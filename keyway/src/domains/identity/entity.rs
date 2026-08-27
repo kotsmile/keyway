@@ -114,6 +114,18 @@ impl Actor {
         }
     }
 
+    /// The groups this caller is in, for a console to show.
+    #[must_use]
+    pub fn group_names(&self) -> Vec<String> {
+        self.groups.iter().cloned().collect()
+    }
+
+    /// The roles this caller holds, by name.
+    #[must_use]
+    pub fn role_names(&self) -> Vec<String> {
+        self.roles.iter().map(|r| r.as_str().to_owned()).collect()
+    }
+
     /// Every string a delegation could name this caller by.
     #[must_use]
     pub fn subjects(&self) -> Vec<Subject> {

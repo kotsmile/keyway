@@ -12,9 +12,10 @@
 
 use crate::container;
 use crate::domains::identity::entity::{Actor, Role};
-use crate::transport::ApiError;
+use crate::transport::{ApiError, Session};
 use axum::extract::{FromRef, FromRequestParts};
 use axum::http::request::Parts;
+use axum_extra::extract::cookie::{Key, PrivateCookieJar};
 use chrono::Utc;
 use std::sync::Arc;
 
@@ -25,6 +26,8 @@ pub struct AuthState {
     pub identity: container::Identity,
     /// Who a local run acts as. `None` once an issuer is configured.
     pub dev: Option<DevActor>,
+    /// Reads the session cookie.
+    pub cookie_key: axum_extra::extract::cookie::Key,
 }
 
 /// The identity a dev-mode run assumes.
@@ -53,6 +56,16 @@ where
 
         if let Some(presented) = bearer(parts) {
             return resolve_token(&auth, presented).await.map(Caller);
+        }
+
+        if let Some(session) = session_from(parts, &auth.cookie_key) {
+            if session.is_live(Utc::now()) {
+                return Ok(Caller(session.actor()));
+            }
+            // Expired rather than absent. Saying so is what lets the console
+            // send somebody back to sign in instead of showing an empty page.
+            tracing::debug!(user = %session.handle, "session expired");
+            return Err(ApiError::Unauthorized);
         }
 
         // No credential. In dev mode that is the configured user; otherwise it
@@ -114,4 +127,10 @@ async fn resolve_token(auth: &AuthState, presented: &str) -> Result<Actor, ApiEr
         tracing::info!(subject = %token.subject, "token holder is no longer active");
         ApiError::Unauthorized
     })
+}
+
+/// Reads the session cookie, if there is a valid one.
+fn session_from(parts: &Parts, key: &Key) -> Option<Session> {
+    let jar = PrivateCookieJar::from_headers(&parts.headers, key.clone());
+    Session::from_cookie(jar.get(Session::COOKIE)?.value())
 }

@@ -30,6 +30,17 @@ pub struct AppState {
     pub identity: container::Identity,
     pub auth: Arc<transport::AuthState>,
     pub branding: Arc<config::Branding>,
+    /// The configured issuer, absent in dev mode.
+    pub oidc: Option<Arc<domains::identity::infra::Oidc>>,
+    pub session_hours: i64,
+    /// Signs and encrypts the session cookie.
+    pub cookie_key: axum_extra::extract::cookie::Key,
+}
+
+impl FromRef<AppState> for axum_extra::extract::cookie::Key {
+    fn from_ref(state: &AppState) -> Self {
+        state.cookie_key.clone()
+    }
 }
 
 impl FromRef<AppState> for Arc<transport::AuthState> {

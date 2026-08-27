@@ -18,6 +18,9 @@ pub fn build(state: AppState) -> Router {
         // an unhealthy pod must be able to say so.
         .route("/healthz", get(|| async { "ok" }))
         .nest("/api", api)
+        // Sign-in lives at the root, not under /api: a browser is redirected
+        // here, and /api is for things that speak JSON.
+        .merge(crate::domains::identity::transport::http::routes())
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

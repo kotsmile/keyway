@@ -122,6 +122,26 @@ pub struct Oidc {
     pub groups_claim: String,
     #[serde(default = "default_roles_claim")]
     pub roles_claim: String,
+    /// Stripped from a role name before keyway reads it, so a realm can
+    /// namespace its roles (`keyway:admin`) without keyway assuming a scheme.
+    #[serde(default = "default_role_prefix")]
+    pub role_prefix: String,
+    /// Signs and encrypts the session cookie. At least 32 bytes.
+    ///
+    /// Changing it signs everybody out, which is the intended way to sign
+    /// everybody out.
+    #[serde(default)]
+    pub session_key: String,
+    /// How long a browser session lasts.
+    #[serde(default = "default_session_hours")]
+    pub session_hours: i64,
+    /// An optional live connection to the identity provider.
+    ///
+    /// Unset, keyway calls it on no request at all and a token's groups are
+    /// what was remembered at its holder's last sign-in. Set, membership is
+    /// live and disabling an account cuts every token it issued (ADR-0004).
+    #[serde(default)]
+    pub directory: String,
     /// Who a local run acts as. With no issuer, authentication is off and the
     /// service acts as this user — every authorisation decision is still made,
     /// so a local run behaves like production minus the redirect.
@@ -139,6 +159,14 @@ fn default_groups_claim() -> String {
 
 fn default_roles_claim() -> String {
     "realm_access.roles".to_owned()
+}
+
+fn default_role_prefix() -> String {
+    "keyway:".to_owned()
+}
+
+fn default_session_hours() -> i64 {
+    8
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
