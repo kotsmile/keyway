@@ -11,6 +11,24 @@ env:
 jobs:
   rust:
     runs-on: ubuntu-latest
+
+    # The schema tests skip themselves when KEYWAY_TEST_DATABASE_URL is unset,
+    # which keeps `cargo test` runnable on a laptop with no database — so CI
+    # has to provide one, or they would pass by doing nothing.
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: keyway
+          POSTGRES_PASSWORD: keyway
+          POSTGRES_DB: keyway
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -20,3 +38,5 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets --all-features
       - run: cargo test --all
+        env:
+          KEYWAY_TEST_DATABASE_URL: postgres://keyway:keyway@localhost:5432/keyway
