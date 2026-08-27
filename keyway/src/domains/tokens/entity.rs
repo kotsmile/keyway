@@ -16,6 +16,12 @@ pub const PREFIX: &str = "kw";
 
 /// The public half. Not a secret: it is the lookup key, and what an audit row
 /// names.
+///
+/// Rendered as HEX rather than base64url, which is the whole reason the format
+/// is unambiguous: `-` is the separator, base64url contains `-`, and an id
+/// carrying one would split in the wrong place and fail to verify against its
+/// own hash. Hex cannot, so the first `-` after the prefix is always the
+/// separator.
 const ID_BYTES: usize = 8;
 
 /// The secret half.
@@ -122,7 +128,7 @@ pub fn mint(
         return Err(Error::NameRequired { max: MAX_NAME });
     }
 
-    let id = random_b64(ID_BYTES)?;
+    let id = random_hex(ID_BYTES)?;
     let secret = Zeroizing::new(random_b64(SECRET_BYTES)?);
 
     Ok((
@@ -140,11 +146,15 @@ pub fn mint(
 }
 
 /// Splits `kw-<id>-<secret>`.
+///
+/// On the FIRST `-` after the prefix, which is only unambiguous because the id
+/// is hex. The secret half is base64url and may well contain `-`; that is
+/// fine, since everything after the separator is the secret.
 #[must_use]
 pub fn split(presented: &str) -> Option<(&str, &str)> {
     let rest = presented.strip_prefix(PREFIX)?.strip_prefix('-')?;
     let (id, secret) = rest.split_once('-')?;
-    if id.is_empty() || secret.is_empty() {
+    if id.is_empty() || secret.is_empty() || !id.chars().all(|c| c.is_ascii_hexdigit()) {
         return None;
     }
     Some((id, secret))
@@ -169,6 +179,12 @@ fn random_b64(bytes: usize) -> Result<String, Error> {
     let mut raw = Zeroizing::new(vec![0_u8; bytes]);
     getrandom::fill(&mut raw).map_err(|e| Error::Rng(e.to_string()))?;
     Ok(BASE64URL.encode(&*raw))
+}
+
+fn random_hex(bytes: usize) -> Result<String, Error> {
+    let mut raw = vec![0_u8; bytes];
+    getrandom::fill(&mut raw).map_err(|e| Error::Rng(e.to_string()))?;
+    Ok(raw.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 #[cfg(test)]
@@ -247,6 +263,36 @@ mod tests {
     }
 
     #[test]
+    fn every_minted_token_verifies_against_its_own_hash() {
+        // A REGRESSION TEST, and it has to loop. The id was base64url once,
+        // which contains `-` — the same character that separates the halves.
+        // Roughly one token in three split in the wrong place and could not be
+        // used at all, and a single round trip missed it two times in three.
+        for _ in 0..512 {
+            let (stored, plaintext) = minted();
+            let (id, secret) = split(&plaintext).expect("splits");
+            assert_eq!(id, stored.id, "{}", *plaintext);
+            assert!(
+                stored.admits(secret, Utc::now()).is_ok(),
+                "{} did not verify",
+                *plaintext
+            );
+        }
+    }
+
+    #[test]
+    fn an_id_never_contains_the_separator() {
+        for _ in 0..512 {
+            let (stored, _) = minted();
+            assert!(
+                !stored.id.contains('-'),
+                "{} would split in the wrong place",
+                stored.id
+            );
+        }
+    }
+
+    #[test]
     fn tokens_do_not_repeat() {
         let (first, _) = minted();
         let (second, _) = minted();
@@ -272,11 +318,17 @@ mod tests {
 
     #[test]
     fn a_secret_containing_a_dash_survives_the_split() {
-        // base64url may itself contain `-`, so the split is on the FIRST
-        // separator after the id only.
+        // The secret half is base64url and may contain `-`; everything after
+        // the first separator is the secret.
         let (id, secret) = split("kw-aa-bb-cc").expect("splits");
         assert_eq!(id, "aa");
         assert_eq!(secret, "bb-cc");
+    }
+
+    #[test]
+    fn an_id_that_is_not_hex_is_refused() {
+        // Nothing keyway minted looks like this, so it is a probe.
+        assert!(split("kw-zzz-secret").is_none());
     }
 
     #[test]
