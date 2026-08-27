@@ -1,5 +1,6 @@
 //! Configured backing services, and the seam behind them.
 
+pub mod keyway;
 mod manager;
 mod registry;
 #[cfg(test)]
