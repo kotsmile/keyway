@@ -14,7 +14,7 @@ use keyway::domains::identity::infra::{KeycloakDirectory, Oidc, PostgresIdentity
 use keyway::domains::secrets::OwnStoreService;
 use keyway::domains::secrets::entity::{Keyring, Registry, SecretManager, Store};
 use keyway::domains::secrets::infra::{
-    AwsSecretsManager, GcpSecretManager, PostgresOwnStoreRepo, YcLockbox,
+    AwsSecretsManager, GcpSecretManager, KubernetesSecrets, PostgresOwnStoreRepo, YcLockbox,
 };
 use keyway::domains::tokens::TokenService;
 use keyway::domains::tokens::infra::PostgresTokenRepo;
@@ -256,10 +256,24 @@ async fn mount_stores(config: &Config, pool: &sqlx::PgPool) -> eyre::Result<Regi
                 ))
             }
             "aws" => Box::new(AwsSecretsManager::new(setting("region")).await),
+            "k8s" => {
+                let namespace = setting("namespace")
+                    .ok_or_else(|| eyre::eyre!("store {:?} needs a `namespace`", declared.id))?;
+                if declared.select.is_empty() {
+                    // Not fatal, but a Store showing every service-account
+                    // token in a namespace is one nobody wanted.
+                    tracing::warn!(
+                        store = %declared.id,
+                        "no `select` on a kubernetes store; \
+                         every Secret in the namespace will be listed"
+                    );
+                }
+                Box::new(KubernetesSecrets::new(namespace).await?)
+            }
             other => {
                 return Err(eyre::eyre!(
                     "store {:?} names an unknown type {other:?}; \
-                     this build has: keyway, gcp, yc, aws",
+                     this build has: keyway, gcp, yc, aws, k8s",
                     declared.id
                 ));
             }
