@@ -43,6 +43,16 @@ Secrets, Argo CD, Helm — and an edit keyway accepts there is an edit the next
 reconcile silently discards. The defaults name those three; a deployment
 overrides them for its own tooling.
 
+### Shipping
+
+**Component**:
+One separately shipped piece of keyway, which owns its own image or artefact.
+There are three: **keyway** (the backend), **keyway-dashboard** (the frontend)
+and **keyway-cli** (the binary a person runs). A Component is a deployment unit,
+never a domain concept — a **Store** is not one, and neither is an adapter.
+_Avoid_: service, module, package (a crate is a package; a Component may be
+several).
+
 ### Configuration
 
 **Config file**:
