@@ -1,1 +1,3 @@
-//! How grants are reached over HTTP (#15).
+//! Grants over HTTP.
+
+pub mod http;

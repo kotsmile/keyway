@@ -6,7 +6,10 @@ use std::fmt;
 /// allowed to overwrite a secret you may not read is not a power anybody wants
 /// to grant by accident, so the variants are declared weakest first and the
 /// derived `Ord` is the ladder.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
 pub enum Level {
     /// Sees that a secret exists and which keys it has.
     Guest,

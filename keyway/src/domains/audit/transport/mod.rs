@@ -1,1 +1,3 @@
-//! The audit feed (#16).
+//! The audit feed.
+
+pub mod http;

@@ -60,7 +60,7 @@ impl StoreConfig {
 /// Four verbs rather than a `read_only` flag, because the interesting
 /// configuration is neither end of that boolean: it is the shared production
 /// project keyway may read and amend but must never create or destroy in.
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Deserialize, serde::Serialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "lowercase")]
 pub enum Verb {
     /// Everything that discloses: list, get, versions, access.

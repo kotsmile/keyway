@@ -1,1 +1,3 @@
-//! How the inventory is reached over HTTP (#15, #17).
+//! How the inventory is reached.
+
+pub mod http;

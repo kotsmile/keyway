@@ -56,7 +56,7 @@ impl Store {
     /// When `read` is not allowed, or the backend fails.
     pub async fn list(&self) -> Result<Vec<Secret>, StoreError> {
         self.require(Verb::Read)?;
-        let mut secrets = self.manager.list().await?;
+        let mut secrets = self.timed("list", self.manager.list()).await?;
         secrets.retain(|secret| self.selects(secret));
         for secret in &mut secrets {
             secret.store.clone_from(&self.config.id);
@@ -76,7 +76,7 @@ impl Store {
     /// fails.
     pub async fn get(&self, name: &str) -> Result<Secret, StoreError> {
         self.require(Verb::Read)?;
-        let mut secret = self.manager.get(name).await?;
+        let mut secret = self.timed("get", self.manager.get(name)).await?;
         if !self.selects(&secret) {
             return Err(BackendError::NotFound.into());
         }
@@ -91,7 +91,7 @@ impl Store {
     /// As [`Self::get`].
     pub async fn versions(&self, name: &str) -> Result<Vec<Version>, StoreError> {
         self.get(name).await?;
-        Ok(self.manager.versions(name).await?)
+        Ok(self.timed("versions", self.manager.versions(name)).await?)
     }
 
     /// One version's payload. `None` means the latest.
@@ -101,7 +101,9 @@ impl Store {
     /// As [`Self::get`].
     pub async fn access(&self, name: &str, version: Option<&str>) -> Result<Vec<u8>, StoreError> {
         self.get(name).await?;
-        Ok(self.manager.access(name, version).await?)
+        Ok(self
+            .timed("access", self.manager.access(name, version))
+            .await?)
     }
 
     /// Writes a new revision.
@@ -114,7 +116,9 @@ impl Store {
         self.require(Verb::Edit)?;
         let secret = self.get(name).await?;
         self.require_unprotected(&secret)?;
-        Ok(self.manager.add_version(name, payload).await?)
+        Ok(self
+            .timed("add_version", self.manager.add_version(name, payload))
+            .await?)
     }
 
     /// Replaces a secret's labels.
@@ -126,7 +130,9 @@ impl Store {
         self.require(Verb::Edit)?;
         let secret = self.get(name).await?;
         self.require_unprotected(&secret)?;
-        Ok(self.manager.set_labels(name, labels).await?)
+        Ok(self
+            .timed("set_labels", self.manager.set_labels(name, labels))
+            .await?)
     }
 
     /// Brings a new secret into existence.
@@ -136,7 +142,9 @@ impl Store {
     /// When `create` is not allowed, or the backend fails.
     pub async fn create(&self, name: &str, labels: Metadata) -> Result<(), StoreError> {
         self.require(Verb::Create)?;
-        Ok(self.manager.create(name, labels).await?)
+        Ok(self
+            .timed("create", self.manager.create(name, labels))
+            .await?)
     }
 
     /// Destroys a secret and every version of it.
@@ -149,7 +157,27 @@ impl Store {
         self.require(Verb::Delete)?;
         let secret = self.get(name).await?;
         self.require_unprotected(&secret)?;
-        Ok(self.manager.delete(name).await?)
+        Ok(self.timed("delete", self.manager.delete(name)).await?)
+    }
+
+    /// Times one backend call and records how it went.
+    ///
+    /// Here rather than in each adapter, for the same reason `allow` is: a new
+    /// backend cannot forget, and the labels stay a bounded set — Store and
+    /// operation, never a secret's name.
+    async fn timed<T, F>(&self, operation: &'static str, call: F) -> Result<T, BackendError>
+    where
+        F: std::future::Future<Output = Result<T, BackendError>>,
+    {
+        let started = std::time::Instant::now();
+        let result = call.await;
+        crate::infra::telemetry::backend_call(
+            &self.config.id,
+            operation,
+            if result.is_ok() { "ok" } else { "error" },
+            started.elapsed().as_secs_f64(),
+        );
+        result
     }
 
     fn require(&self, verb: Verb) -> Result<(), StoreError> {

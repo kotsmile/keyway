@@ -13,3 +13,27 @@ pub mod domains;
 pub mod infra;
 pub mod router;
 pub mod transport;
+
+use axum::extract::FromRef;
+use std::sync::Arc;
+
+/// What every handler is given.
+///
+/// Concrete types come from [`container`], so a handler names a service rather
+/// than an implementation.
+#[derive(Clone)]
+pub struct AppState {
+    pub stores: Arc<domains::secrets::entity::Registry>,
+    pub access: container::Access,
+    pub audit: container::Audit,
+    pub tokens: container::Tokens,
+    pub identity: container::Identity,
+    pub auth: Arc<transport::AuthState>,
+    pub branding: Arc<config::Branding>,
+}
+
+impl FromRef<AppState> for Arc<transport::AuthState> {
+    fn from_ref(state: &AppState) -> Self {
+        state.auth.clone()
+    }
+}

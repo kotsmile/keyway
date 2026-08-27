@@ -28,6 +28,24 @@ pub struct Config {
     pub stores: Vec<StoreConfig>,
     #[serde(default)]
     pub branding: Branding,
+    #[serde(default)]
+    pub telemetry: Telemetry,
+}
+
+/// Where traces go, if anywhere.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct Telemetry {
+    /// An OTLP collector. Empty means traces stay local: a deployment with no
+    /// collector should not be retrying exports into the void.
+    #[serde(default)]
+    pub otlp_endpoint: String,
+    #[serde(default = "default_service_name")]
+    pub service_name: String,
+}
+
+fn default_service_name() -> String {
+    "keyway".to_owned()
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -35,18 +53,31 @@ pub struct Config {
 pub struct Server {
     #[serde(default = "default_address")]
     pub address: String,
+    /// Where `/metrics` is served, deliberately not the API's port.
+    ///
+    /// A scrape endpoint publishes what a deployment holds — Store ids, call
+    /// rates, error rates — to whoever can reach it, and a metrics port is
+    /// almost always less guarded than an API one. Separating them lets a
+    /// deployment expose the API and keep this on the cluster network.
+    #[serde(default = "default_metrics_address")]
+    pub metrics_address: String,
 }
 
 impl Default for Server {
     fn default() -> Self {
         Self {
             address: default_address(),
+            metrics_address: default_metrics_address(),
         }
     }
 }
 
 fn default_address() -> String {
     ":8080".to_owned()
+}
+
+fn default_metrics_address() -> String {
+    ":9090".to_owned()
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
