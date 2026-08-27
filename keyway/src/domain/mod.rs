@@ -5,7 +5,9 @@
 //! what has been done to it.
 
 mod level;
+mod secret;
 mod subject;
 
 pub use level::{Level, UnknownLevel};
+pub use secret::{Metadata, Secret, Version, VersionState};
 pub use subject::Subject;

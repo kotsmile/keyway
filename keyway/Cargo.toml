@@ -11,9 +11,13 @@ name = "keyway-server"
 path = "src/main.rs"
 
 [dependencies]
+async-trait = "0.1.92"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_norway = "0.9.42"
 thiserror = "2.0.20"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tokio = { version = "1.53.1", features = ["macros", "rt"] }

@@ -11,7 +11,7 @@ mod store;
 
 pub use placeholder::{Reason, Unresolved};
 pub use selector::Selector;
-pub use store::{Store, Verb};
+pub use store::{StoreConfig, Verb};
 
 use serde::Deserialize;
 use std::collections::BTreeSet;
@@ -25,7 +25,7 @@ pub struct Config {
     pub postgres: Postgres,
     pub oidc: Oidc,
     #[serde(default)]
-    pub stores: Vec<Store>,
+    pub stores: Vec<StoreConfig>,
     #[serde(default)]
     pub branding: Branding,
 }

@@ -9,7 +9,7 @@ use serde_norway::Mapping;
 /// sandbox — and each carries its own scope, its own verbs and its own
 /// credential.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub struct Store {
+pub struct StoreConfig {
     /// The stable handle used in URLs and in the delegations table. Renaming
     /// one orphans its grants, so it is chosen once and left alone.
     pub id: String,
@@ -37,7 +37,7 @@ pub struct Store {
     pub settings: Mapping,
 }
 
-impl Store {
+impl StoreConfig {
     /// The title, or the id when none was given.
     #[must_use]
     pub fn display_title(&self) -> &str {
@@ -80,7 +80,7 @@ pub enum Verb {
 mod tests {
     use super::*;
 
-    fn store(yaml: &str) -> Store {
+    fn store(yaml: &str) -> StoreConfig {
         serde_norway::from_str(yaml).expect("valid store")
     }
 

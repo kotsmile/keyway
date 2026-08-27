@@ -1,3 +1,4 @@
+use crate::domain::Metadata;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
@@ -53,6 +54,21 @@ impl Selector {
             .any(|(kind, key, want)| matches_one(kind, key, want, labels, annotations))
     }
 
+    /// The first entry `metadata` satisfies, as `key=value` — what a refusal
+    /// names so its reader knows which tool to go and look at.
+    #[must_use]
+    pub fn first_match(&self, labels: &Metadata, annotations: &Metadata) -> Option<String> {
+        self.entries()
+            .find(|(kind, key, want)| matches_one(*kind, key, want, labels, annotations))
+            .map(|(_, key, want)| {
+                if want == ANY {
+                    key.to_owned()
+                } else {
+                    format!("{key}={want}")
+                }
+            })
+    }
+
     fn entries(&self) -> impl Iterator<Item = (Kind, &str, &str)> {
         let labels = self
             .labels
@@ -87,9 +103,6 @@ impl Selector {
         }
     }
 }
-
-/// A secret's metadata as a backend reports it.
-pub type Metadata = BTreeMap<String, String>;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
