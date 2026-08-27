@@ -13,7 +13,9 @@ use keyway::domains::identity::entity::Role;
 use keyway::domains::identity::infra::{KeycloakDirectory, Oidc, PostgresIdentityRepo};
 use keyway::domains::secrets::OwnStoreService;
 use keyway::domains::secrets::entity::{Keyring, Registry, SecretManager, Store};
-use keyway::domains::secrets::infra::{GcpSecretManager, PostgresOwnStoreRepo, YcLockbox};
+use keyway::domains::secrets::infra::{
+    AwsSecretsManager, GcpSecretManager, PostgresOwnStoreRepo, YcLockbox,
+};
 use keyway::domains::tokens::TokenService;
 use keyway::domains::tokens::infra::PostgresTokenRepo;
 use keyway::infra::{postgres, telemetry};
@@ -253,10 +255,11 @@ async fn mount_stores(config: &Config, pool: &sqlx::PgPool) -> eyre::Result<Regi
                     setting("secret").unwrap_or_default(),
                 ))
             }
+            "aws" => Box::new(AwsSecretsManager::new(setting("region")).await),
             other => {
                 return Err(eyre::eyre!(
                     "store {:?} names an unknown type {other:?}; \
-                     this build has: keyway, gcp, yc",
+                     this build has: keyway, gcp, yc, aws",
                     declared.id
                 ));
             }
