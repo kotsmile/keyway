@@ -1,3 +1,4 @@
+#![allow(dead_code)] // shared across test binaries; each uses part of it
 //! A migrated database per test.
 //!
 //! Each test gets a private schema rather than sharing `public`: these run in
@@ -38,3 +39,5 @@ pub async fn pool() -> Option<PgPool> {
         .expect("migrations apply");
     Some(pool)
 }
+
+pub mod app;
