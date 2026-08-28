@@ -8,6 +8,7 @@ import {
   type Secret,
   type Version,
 } from "../api";
+import { asYaml, normalizeValue } from "../value";
 
 /** Markers a reconciler stamps. A secret carrying one is shown and never
  *  edited — the backend refuses anyway, and a disabled button with a reason
@@ -31,6 +32,7 @@ export function SecretPage({ id, me }: { id: string; me: Me }) {
   const [grants, setGrants] = useState<Grant[]>([]);
   const [history, setHistory] = useState<AuditEntry[]>([]);
   const [revealed, setRevealed] = useState<string | null>(null);
+  const [showRaw, setShowRaw] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [delegating, setDelegating] = useState(false);
@@ -103,15 +105,26 @@ export function SecretPage({ id, me }: { id: string; me: Me }) {
             Reveal — this is recorded
           </button>
         ) : (
-          <>
-            <div className="value">{revealed}</div>
-            <button
-              style={{ marginTop: 8 }}
-              onClick={() => setRevealed(null)}
-            >
-              Hide
-            </button>
-          </>
+          (() => {
+            // YAML is the reading format; the raw JSON blob is what a store
+            // actually holds, one click away rather than hidden.
+            const yaml = asYaml(revealed);
+            return (
+              <>
+                <div className="value">
+                  {yaml === null || showRaw ? revealed : yaml}
+                </div>
+                <div className="row" style={{ marginTop: 8 }}>
+                  <button onClick={() => setRevealed(null)}>Hide</button>
+                  {yaml !== null && (
+                    <button onClick={() => setShowRaw(!showRaw)}>
+                      {showRaw ? "Show YAML" : "Show stored JSON"}
+                    </button>
+                  )}
+                </div>
+              </>
+            );
+          })()
         )
       ) : (
         <p className="muted">
@@ -274,7 +287,9 @@ function NewVersionDialog({
         </p>
 
         <div className="field">
-          <label htmlFor="value">Value</label>
+          <label htmlFor="value">
+            Value — YAML or JSON for key/value, anything else for text
+          </label>
           <textarea
             id="value"
             value={value}
@@ -300,7 +315,7 @@ function NewVersionDialog({
             onClick={() => {
               setSaving(true);
               api
-                .patch(id, value, note)
+                .patch(id, normalizeValue(value), note)
                 .then(onSaved)
                 .catch((e: unknown) => {
                   setError(e instanceof Error ? e.message : String(e));

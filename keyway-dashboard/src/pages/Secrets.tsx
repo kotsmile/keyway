@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type Me, type Secret, type Store } from "../api";
+import { normalizeValue } from "../value";
 
 export function SecretsPage({ me }: { me: Me }) {
   const [secrets, setSecrets] = useState<Secret[] | null>(null);
@@ -133,7 +134,7 @@ function CreateDialog({
     setSaving(true);
     setError(null);
     api
-      .create(store, name.trim(), value, note)
+      .create(store, name.trim(), normalizeValue(value), note)
       .then(onCreated)
       .catch((e: unknown) => {
         setError(e instanceof Error ? e.message : String(e));
@@ -177,13 +178,13 @@ function CreateDialog({
 
         <div className="field">
           <label htmlFor="value">
-            Value — JSON for key/value, anything else for text
+            Value — YAML or JSON for key/value, anything else for text
           </label>
           <textarea
             id="value"
             value={value}
             onChange={(e) => setValue(e.target.value)}
-            placeholder={'{"db_password": "…"}'}
+            placeholder={"db_password: …"}
           />
         </div>
 
