@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use eyre::Context as _;
 use sqlx::PgPool;
+use uuid::Uuid;
 
 pub struct PostgresAuditRepo {
     pool: PgPool,
@@ -28,6 +29,7 @@ struct EntryDto {
     action: String,
     store: String,
     secret: String,
+    secret_id: Option<Uuid>,
     version: String,
     keys: Vec<String>,
     subject: String,
@@ -47,6 +49,7 @@ impl From<EntryDto> for Entry {
             action: Action::parse(&dto.action).unwrap_or(Action::Update),
             store: dto.store,
             secret: dto.secret,
+            secret_id: dto.secret_id,
             version: dto.version,
             keys: dto.keys,
             subject: dto.subject,
@@ -65,13 +68,14 @@ impl AuditRepo for PostgresAuditRepo {
     ) -> eyre::Result<()> {
         sqlx::query!(
             "INSERT INTO audit
-                (actor, via_token, action, store, secret, version, keys, subject, note)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                (actor, via_token, action, store, secret, secret_id, version, keys, subject, note)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
             actor,
             via_token,
             record.action.as_str(),
             record.store,
             record.secret,
+            record.secret_id,
             record.version,
             &record.keys,
             record.subject,
@@ -86,7 +90,7 @@ impl AuditRepo for PostgresAuditRepo {
     async fn for_secret(&self, store: &str, secret: &str, limit: i64) -> eyre::Result<Vec<Entry>> {
         let rows = sqlx::query_as!(
             EntryDto,
-            "SELECT id, at, actor, via_token, action, store, secret, version, keys, subject, note
+            "SELECT id, at, actor, via_token, action, store, secret, secret_id, version, keys, subject, note
              FROM audit WHERE store = $1 AND secret = $2
              ORDER BY at DESC, id DESC LIMIT $3",
             store,
@@ -102,7 +106,7 @@ impl AuditRepo for PostgresAuditRepo {
     async fn feed(&self, limit: i64, before: Option<i64>) -> eyre::Result<Vec<Entry>> {
         let rows = sqlx::query_as!(
             EntryDto,
-            "SELECT id, at, actor, via_token, action, store, secret, version, keys, subject, note
+            "SELECT id, at, actor, via_token, action, store, secret, secret_id, version, keys, subject, note
              FROM audit WHERE ($2::bigint IS NULL OR id < $2)
              ORDER BY at DESC, id DESC LIMIT $1",
             limit,

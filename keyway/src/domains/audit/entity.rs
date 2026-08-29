@@ -9,6 +9,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 /// What was done.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,6 +72,10 @@ pub struct Entry {
     pub action: Action,
     pub store: String,
     pub secret: String,
+    /// The uuid the secret answered to when this happened. Absent on entries
+    /// recorded before it was kept.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret_id: Option<Uuid>,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub version: String,
     /// Which key/value entries the action touched. Never the values.
@@ -90,6 +95,7 @@ pub struct Entry {
 #[derive(Debug, Clone)]
 pub struct Record<'a> {
     pub action: Action,
+    pub secret_id: Uuid,
     pub store: &'a str,
     pub secret: &'a str,
     pub version: &'a str,
@@ -100,9 +106,10 @@ pub struct Record<'a> {
 
 impl<'a> Record<'a> {
     #[must_use]
-    pub fn new(action: Action, store: &'a str, secret: &'a str) -> Self {
+    pub fn new(action: Action, secret_id: Uuid, store: &'a str, secret: &'a str) -> Self {
         Self {
             action,
+            secret_id,
             store,
             secret,
             version: "",
@@ -158,7 +165,7 @@ mod tests {
 
     #[test]
     fn a_record_defaults_to_the_fields_most_entries_do_not_set() {
-        let record = Record::new(Action::Reveal, "gcp-prod", "db-creds");
+        let record = Record::new(Action::Reveal, Uuid::new_v4(), "gcp-prod", "db-creds");
         assert!(record.version.is_empty());
         assert!(record.keys.is_empty());
         assert!(record.subject.is_empty());

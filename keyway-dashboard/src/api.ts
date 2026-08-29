@@ -68,6 +68,8 @@ export interface AuditEntry {
   action: string;
   store: string;
   secret: string;
+  /** Absent on entries recorded before the id was kept. */
+  secret_id?: string;
   version?: string;
   keys?: string[];
   subject?: string;

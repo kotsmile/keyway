@@ -150,7 +150,7 @@ async fn delegate(
         .audit
         .record(
             &actor,
-            Record::new(Action::Delegate, &store, &secret)
+            Record::new(Action::Delegate, id, &store, &secret)
                 .subject(&body.subject)
                 .keys(grant.keys.clone())
                 .note(&grant.note),
@@ -200,7 +200,7 @@ async fn revoke(
         .audit
         .record(
             &actor,
-            Record::new(Action::Revoke, &store, &secret).subject(&subject),
+            Record::new(Action::Revoke, id, &store, &secret).subject(&subject),
         )
         .await
         .map_err(ApiError::Internal)?;

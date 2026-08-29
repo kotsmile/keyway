@@ -187,7 +187,7 @@ async fn reveal(
         .audit
         .record(
             &actor,
-            Record::new(Action::Reveal, &secret.store, &secret.name)
+            Record::new(Action::Reveal, id, &secret.store, &secret.name)
                 .version(query.version.as_deref().unwrap_or(&secret.latest_version))
                 .keys(query.key.clone()),
         )
@@ -268,7 +268,14 @@ async fn create(
         .audit
         .record(
             &actor,
-            Record::new(Action::Create, &body.store, &body.name)
+            // A fresh secret's uuid is the derived one — creation stamped it
+            // as the keyway-id label just above.
+            Record::new(
+                Action::Create,
+                identity::derive(&body.store, &body.name),
+                &body.store,
+                &body.name,
+            )
                 .version(&version.id)
                 .note(&body.note),
         )
@@ -311,7 +318,7 @@ async fn patch(
         .audit
         .record(
             &actor,
-            Record::new(Action::Update, &secret.store, &secret.name)
+            Record::new(Action::Update, id, &secret.store, &secret.name)
                 .version(&version.id)
                 .note(&body.note),
         )
@@ -366,7 +373,7 @@ async fn delete(
         .audit
         .record(
             &actor,
-            Record::new(Action::Delete, &secret.store, &secret.name),
+            Record::new(Action::Delete, id, &secret.store, &secret.name),
         )
         .await
         .map_err(ApiError::Internal)?;

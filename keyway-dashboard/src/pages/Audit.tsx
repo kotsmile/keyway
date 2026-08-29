@@ -76,7 +76,12 @@ export function AuditPage() {
               </td>
               <td>{actionTag(entry.action)}</td>
               <td>
-                <span className="muted">{entry.store}</span> / {entry.secret}
+                <span className="muted">{entry.store}</span> /{" "}
+                {entry.secret_id ? (
+                  <a href={`#/secrets/${entry.secret_id}`}>{entry.secret}</a>
+                ) : (
+                  entry.secret
+                )}
               </td>
               <td className="muted">
                 {entry.subject ?? entry.keys?.join(", ") ?? entry.note ?? ""}

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, at, actor, via_token, action, store, secret, version, keys, subject, note\n             FROM audit WHERE ($2::bigint IS NULL OR id < $2)\n             ORDER BY at DESC, id DESC LIMIT $1",
+  "query": "SELECT id, at, actor, via_token, action, store, secret, secret_id, version, keys, subject, note\n             FROM audit WHERE ($2::bigint IS NULL OR id < $2)\n             ORDER BY at DESC, id DESC LIMIT $1",
   "describe": {
     "columns": [
       {
@@ -82,6 +82,17 @@
       },
       {
         "ordinal": 7,
+        "name": "secret_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "audit",
+            "name": "secret_id"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
         "name": "version",
         "type_info": "Text",
         "origin": {
@@ -92,7 +103,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 9,
         "name": "keys",
         "type_info": "TextArray",
         "origin": {
@@ -103,7 +114,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "subject",
         "type_info": "Text",
         "origin": {
@@ -114,7 +125,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "note",
         "type_info": "Text",
         "origin": {
@@ -139,11 +150,12 @@
       false,
       false,
       false,
+      true,
       false,
       false,
       false,
       false
     ]
   },
-  "hash": "b179d68bccc16d333fdcb95f92b366fe9a583a462682be5d6ad79016cecb2f0d"
+  "hash": "d0820d8140f98689d63023521fc5f33389f12ba5765b9c0c96bd663a7cb3e0ff"
 }
