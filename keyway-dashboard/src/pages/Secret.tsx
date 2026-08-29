@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
   type AuditEntry,
@@ -239,6 +239,7 @@ export function SecretPage({ id, me }: { id: string; me: Me }) {
       {editing && (
         <NewVersionDialog
           id={id}
+          current={revealed}
           onClose={() => setEditing(false)}
           onSaved={() => {
             setEditing(false);
@@ -262,28 +263,57 @@ export function SecretPage({ id, me }: { id: string; me: Me }) {
   );
 }
 
+/** The stored payload in the form a person edits: YAML for a kv blob, the
+ *  bytes themselves for anything else. */
+function editable(raw: string): string {
+  return asYaml(raw) ?? raw;
+}
+
 function NewVersionDialog({
   id,
+  current,
   onClose,
   onSaved,
 }: {
   id: string;
+  /** The page's already-revealed value, so opening the dialog after a reveal
+   *  does not record a second one. Null when nothing is revealed. */
+  current: string | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(() =>
+    current === null ? "" : editable(current),
+  );
+  const [loading, setLoading] = useState(current === null);
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // Each fetch is an audited reveal, so StrictMode's double-mounted effect
+  // must not turn one opened dialog into two log entries.
+  const requested = useRef(false);
+
+  useEffect(() => {
+    if (current !== null || requested.current) return;
+    requested.current = true;
+    api
+      .reveal(id)
+      // Only fill an untouched field — the reveal must not clobber what the
+      // person already started typing.
+      .then((raw) => setValue((v) => (v === "" ? editable(raw) : v)))
+      .catch(() => {
+        // Couldn't read the old value; the dialog still works from scratch.
+      })
+      .finally(() => setLoading(false));
+  }, [id, current]);
 
   return (
     <div className="overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h1>New version</h1>
         <p className="muted">
-          The current value is not shown here — writing a new one does not
-          require reading the old one, and pre-filling it would mean an audited
-          reveal every time somebody opened this.
+          Pre-filled with the current value so it can be edited in place —
+          reading it here is an audited reveal, recorded like any other.
         </p>
 
         <div className="field">
@@ -293,6 +323,7 @@ function NewVersionDialog({
           <textarea
             id="value"
             value={value}
+            placeholder={loading ? "Loading current value…" : undefined}
             onChange={(e) => setValue(e.target.value)}
           />
         </div>
