@@ -1,5 +1,8 @@
 # Rust rewrite rather than porting locker
 
+> Status: the language choice is superseded by ADR-0006 (Go port); the
+> "never port locker" half still stands.
+
 keyway is the open-source successor to an internal Go service (`locker`), and it
 is being written from scratch in Rust rather than lifted out of that repo. The
 Go code is sound and tested, so the reason is not its quality: it depends on
