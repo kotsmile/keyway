@@ -1,0 +1,43 @@
+{{- if .Values.dashboard.enabled }}
+# The image ships this same file with the backend hardcoded as `keyway` for
+# compose; here the proxy target is the release's actual service name.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "keyway.dashboard.fullname" . }}
+  labels:
+    {{- include "keyway.labels" . | nindent 4 }}
+data:
+  default.conf: |
+    server {
+      listen 8081;
+      root /usr/share/nginx/html;
+
+      # The console routes on the hash, so every path serves index.html and
+      # the SPA sorts it out.
+      location / {
+        try_files $uri /index.html;
+      }
+
+      # The SPA calls the API on its own origin, mirroring the vite dev proxy.
+      location /api/ {
+        proxy_pass http://{{ include "keyway.fullname" . }}:{{ .Values.service.port }};
+      }
+
+      location /auth/ {
+        proxy_pass http://{{ include "keyway.fullname" . }}:{{ .Values.service.port }};
+      }
+
+      # Hashed assets never change under a name; index.html always must be
+      # re-fetched, or a deploy leaves people on the old bundle talking to the
+      # new API.
+      location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+      }
+
+      location = /index.html {
+        add_header Cache-Control "no-store";
+      }
+    }
+{{- end }}

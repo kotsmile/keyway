@@ -1,0 +1,84 @@
+# The backend.
+image:
+  repository: ghcr.io/kotsmile/keyway
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+# The name of a Secret YOU create in the release namespace. It carries what
+# must never sit in values: the environment variables the config file pulls in
+# with `${env:...}` — at least PGPASSWORD and KEYWAY_KEY, plus whatever else
+# your config names (an OIDC client secret, cloud credentials).
+#
+#   kubectl create secret generic keyway-env \
+#     --from-literal=PGPASSWORD=... \
+#     --from-literal=KEYWAY_KEY="$(openssl rand -base64 32)"
+secretName: keyway-env
+
+# keyway's single config file, rendered verbatim into a ConfigMap. This
+# default is a dev-mode skeleton — no issuer means everyone is `dev`, exactly
+# like the quickstart. A real deployment overrides at least `oidc` and
+# `postgres.addr`, and its own `stores`.
+config:
+  server:
+    address: ":8080"
+    metrics_address: ":9090"
+  postgres:
+    addr: postgres:5432
+    name: keyway
+    user: keyway
+    password: ${env:PGPASSWORD}
+    sslmode: disable
+  oidc:
+    dev_user: dev
+    dev_roles: [admin, create]
+    dev_groups: [everyone]
+  branding:
+    name: keyway
+  stores:
+    - id: local
+      type: keyway
+      title: Local store
+      allow: [read, edit, create, delete]
+      key_id: v1
+      key: ${env:KEYWAY_KEY}
+
+# Brings the schema up to date before each rollout, in an init container —
+# `migrate` is its own command precisely so replicas never race to do it.
+migrate:
+  enabled: true
+
+service:
+  type: ClusterIP
+  port: 80
+
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# The console. Its nginx serves the SPA and proxies /api and /auth to the
+# backend service, so an Ingress only ever needs to point here.
+dashboard:
+  enabled: true
+  image:
+    repository: ghcr.io/kotsmile/keyway-dashboard
+    tag: ""
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 80
+  resources: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  # - host: keyway.example.com
+  hosts: []
+  # - secretName: keyway-tls
+  #   hosts: [keyway.example.com]
+  tls: []

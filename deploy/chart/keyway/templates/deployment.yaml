@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "keyway.fullname" . }}
+  labels:
+    {{- include "keyway.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "keyway.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "keyway.selectorLabels" . | nindent 8 }}
+      annotations:
+        # A config edit rolls the pods; nothing rereads the file at runtime.
+        checksum/config: {{ toYaml .Values.config | sha256sum }}
+    spec:
+      {{- with .Values.migrate }}
+      {{- if .enabled }}
+      initContainers:
+        - name: migrate
+          image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag | default $.Chart.AppVersion }}"
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          args: ["--config", "/etc/keyway/config.yml", "migrate"]
+          envFrom:
+            - secretRef:
+                name: {{ $.Values.secretName }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/keyway
+              readOnly: true
+      {{- end }}
+      {{- end }}
+      containers:
+        - name: keyway
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["--config", "/etc/keyway/config.yml", "serve"]
+          envFrom:
+            - secretRef:
+                name: {{ .Values.secretName }}
+          ports:
+            - name: http
+              containerPort: 8080
+            # Scraped from inside the cluster; deliberately never on the
+            # Ingress — see the telemetry module on why the two listeners.
+            - name: metrics
+              containerPort: 9090
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          volumeMounts:
+            - name: config
+              mountPath: /etc/keyway
+              readOnly: true
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "keyway.fullname" . }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

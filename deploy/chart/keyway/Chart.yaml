@@ -1,0 +1,10 @@
+apiVersion: v2
+name: keyway
+description: >-
+  The secrets console: an aggregator over the secret managers an organization
+  already runs, which owns who may see what and records every look.
+type: application
+# The chart's own version; bumped when templates change.
+version: 0.1.0
+# The keyway version the image tags default to; follows the release tags.
+appVersion: "0.1.0"

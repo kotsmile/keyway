@@ -1,0 +1,27 @@
+keyway {{ .Chart.AppVersion }} is rolling out.
+
+Before the pods go Ready, the release needs the Secret `{{ .Values.secretName }}`
+in this namespace, carrying every `${env:...}` the config names:
+
+  kubectl create secret generic {{ .Values.secretName }} \
+    --from-literal=PGPASSWORD=... \
+    --from-literal=KEYWAY_KEY="$(openssl rand -base64 32)"
+
+{{- if .Values.dashboard.enabled }}
+
+The console:
+{{- if .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+  https://{{ .host }}
+{{- end }}
+{{- else }}
+  kubectl port-forward svc/{{ include "keyway.dashboard.fullname" . }} 8081:{{ .Values.dashboard.service.port }}
+  open http://localhost:8081
+{{- end }}
+{{- end }}
+
+{{- if not .Values.config.oidc.issuer }}
+
+WARNING: no `oidc.issuer` in the config — keyway is in dev mode and
+authenticates nobody. Anyone who can reach it is `{{ .Values.config.oidc.dev_user | default "dev" }}`.
+{{- end }}
