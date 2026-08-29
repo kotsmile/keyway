@@ -121,14 +121,11 @@ func (a Actor) MayCreate() bool {
 // cover the teams inside it emits the ancestors in the claim — and then they
 // are ordinary members of this set.
 func (a Actor) IsAddressedBy(subject access.Subject) bool {
-	switch {
-	case subject.IsUser():
+	if subject.IsUser() {
 		return subject.ID() == a.handle
-	case subject.IsGroup():
-		_, ok := a.groups[subject.ID()]
-		return ok
 	}
-	return false
+	_, ok := a.groups[subject.ID()]
+	return ok
 }
 
 // GroupNames is the groups this caller is in, for a console to show.

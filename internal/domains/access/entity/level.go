@@ -6,8 +6,8 @@ import "fmt"
 //
 // It is an ORDER, and a comparison is the whole authorisation test. Being
 // allowed to overwrite a secret you may not read is not a power anybody wants
-// to grant by accident, so the constants are declared weakest first and `<`
-// over them is the ladder.
+// to grant by accident, so the constants are declared weakest first and the
+// integer ordering is the ladder.
 type Level int
 
 const (
@@ -29,16 +29,24 @@ func (l Level) String() string {
 	case Write:
 		return "write"
 	}
-	return fmt.Sprintf("level(%d)", int(l))
+	return fmt.Sprintf("Level(%d)", int(l))
 }
 
 // Reveals is whether this level discloses a secret's value.
-func (l Level) Reveals() bool { return l >= Read }
+func (l Level) Reveals() bool {
+	return l >= Read
+}
 
-// MarshalText spells the level the way the wire and the database do.
-func (l Level) MarshalText() ([]byte, error) { return []byte(l.String()), nil }
+// MarshalText spells the level the way the wire and the `level` column do.
+func (l Level) MarshalText() ([]byte, error) {
+	switch l {
+	case Guest, Read, Write:
+		return []byte(l.String()), nil
+	}
+	return nil, fmt.Errorf("level %d has no word", int(l))
+}
 
-// UnmarshalText reads a level back from its word.
+// UnmarshalText reads a level out of its word.
 func (l *Level) UnmarshalText(text []byte) error {
 	parsed, err := ParseLevel(string(text))
 	if err != nil {
@@ -48,7 +56,7 @@ func (l *Level) UnmarshalText(text []byte) error {
 	return nil
 }
 
-// ParseLevel reads a level from its word.
+// ParseLevel reads a level out of its word.
 func ParseLevel(s string) (Level, error) {
 	switch s {
 	case "guest":
@@ -61,10 +69,9 @@ func ParseLevel(s string) (Level, error) {
 	return Guest, &UnknownLevelError{Word: s}
 }
 
-// UnknownLevelError is a level word nothing here can interpret. It is an
-// error rather than a silent Guest: a delegation whose level failed to parse
-// is one nobody can reason about, and guessing the weakest reading still
-// guesses.
+// UnknownLevelError is a level word nothing here can interpret. It is an error
+// rather than a silent Guest: a delegation whose level failed to parse is one
+// nobody can reason about, and guessing the weakest reading still guesses.
 type UnknownLevelError struct {
 	Word string
 }
