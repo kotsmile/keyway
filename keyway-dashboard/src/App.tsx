@@ -66,7 +66,7 @@ export function App() {
 
   return (
     <div className="app">
-      <aside className="sidebar">
+      <header className="topbar">
         <div className="brand">
           {me.branding.logo ? (
             <img src={me.branding.logo} alt="" />
@@ -106,16 +106,13 @@ export function App() {
           )}
         </nav>
 
-        <div style={{ marginTop: 24 }} className="muted">
-          <div>{me.handle}</div>
-          {me.groups.length > 0 && (
-            <div style={{ fontSize: 12 }}>{me.groups.join(", ")}</div>
-          )}
-          <a href="/auth/logout" style={{ color: "inherit", fontSize: 12 }}>
+        <div className="identity">
+          <span title={me.groups.join(", ")}>{me.handle}</span>
+          <a href="/auth/logout" style={{ color: "inherit" }}>
             Sign out
           </a>
         </div>
-      </aside>
+      </header>
 
       <main className="main">
         {route.page === "secrets" && <SecretsPage me={me} />}

@@ -3,3 +3,4 @@ node_modules/
 dist/
 .env
 *.tsbuildinfo
+docker-compose.override.yml

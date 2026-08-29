@@ -198,7 +198,7 @@ fn default_brand_name() -> String {
 }
 
 fn default_accent() -> String {
-    "#ea580c".to_owned()
+    "#2563eb".to_owned()
 }
 
 #[derive(Debug, thiserror::Error)]

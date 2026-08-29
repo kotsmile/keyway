@@ -5,45 +5,30 @@
  * names are deliberately NOT an override surface: every one would become a
  * compatibility promise nobody could rename.
  *
- * Dark is the design target; light is the derived variant. The accent is the
- * only saturated colour — everything else is neutral grey, so whatever accent
+ * Light is the design — there is deliberately no dark variant. The accent is
+ * the only saturated colour — everything else is neutral grey, so whatever accent
  * a deployment brands with stays the loudest thing on screen. */
 
 :root {
-  --kw-accent: #ea580c;
+  --kw-accent: #2563eb;
   --kw-accent-text: #ffffff;
 
-  --kw-bg: #0e1014;
-  --kw-surface: #16181a;
-  --kw-surface-2: #1c1e21;
-  --kw-border: #26272b;
-  --kw-border-subtle: #1f2023;
-  --kw-text: #ebebeb;
-  --kw-muted: #8b8d92;
-  --kw-danger: #ff6b5e;
-  --kw-warning: #f0c46a;
-  --kw-warning-bg: #241d10;
+  --kw-bg: #f7f7f6;
+  --kw-surface: #ffffff;
+  --kw-surface-2: #f1f1f0;
+  --kw-border: #e2e2e0;
+  --kw-border-subtle: #ececea;
+  --kw-text: #1c1c1b;
+  --kw-muted: #6e6e6b;
+  --kw-danger: #c0362c;
+  --kw-warning: #8a6100;
+  --kw-warning-bg: #fff8e6;
 
   --kw-radius: 6px;
   --kw-gap: 16px;
   --kw-sans:
     ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --kw-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    --kw-bg: #fbfbfa;
-    --kw-surface: #ffffff;
-    --kw-surface-2: #f4f4f3;
-    --kw-border: #e5e5e4;
-    --kw-border-subtle: #efefee;
-    --kw-text: #1b1b1a;
-    --kw-muted: #6f6f6c;
-    --kw-danger: #c0362c;
-    --kw-warning: #8a6100;
-    --kw-warning-bg: #fff8e6;
-  }
 }
 
 * {
@@ -104,8 +89,8 @@ button.primary {
 }
 
 button.primary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--kw-accent) 88%, white);
-  border-color: color-mix(in srgb, var(--kw-accent) 88%, white);
+  background: color-mix(in srgb, var(--kw-accent) 88%, black);
+  border-color: color-mix(in srgb, var(--kw-accent) 88%, black);
 }
 
 button.danger {
@@ -128,7 +113,7 @@ textarea {
   padding: 6px 10px;
   border: 1px solid var(--kw-border);
   border-radius: var(--kw-radius);
-  background: var(--kw-bg);
+  background: var(--kw-surface);
   color: var(--kw-text);
   width: 100%;
   transition: border-color 0.12s;
@@ -153,17 +138,20 @@ textarea {
 }
 
 .app {
-  display: grid;
-  grid-template-columns: 232px 1fr;
   min-height: 100vh;
 }
 
-/* The sidebar sits on the page colour, not the surface colour: panels and
- * tables read as raised content, the chrome around them recedes. */
-.sidebar {
-  border-right: 1px solid var(--kw-border-subtle);
-  padding: var(--kw-gap);
-  background: var(--kw-bg);
+/* The top bar sits on the surface colour with a hairline below it; the page
+ * behind stays a shade darker, so panels and tables read as raised content
+ * against chrome that recedes. */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--kw-surface);
+  border-bottom: 1px solid var(--kw-border);
+  padding: 0 24px;
+  height: 52px;
 }
 
 .brand {
@@ -173,7 +161,7 @@ textarea {
   font-weight: 600;
   font-size: 14px;
   letter-spacing: 0.01em;
-  margin-bottom: 24px;
+  margin-right: 24px;
 }
 
 .brand img {
@@ -191,34 +179,46 @@ textarea {
 
 .nav {
   display: flex;
-  flex-direction: column;
-  gap: 1px;
+  align-self: stretch;
+  gap: 4px;
 }
 
+/* Nav buttons span the bar's full height so the active underline sits on the
+ * bar's own bottom border. */
 .nav button {
   border: none;
+  border-radius: 0;
   background: none;
   font-weight: 450;
   color: var(--kw-muted);
-  text-align: left;
-  padding: 6px 10px;
+  padding: 0 12px;
+  box-shadow: inset 0 -2px 0 transparent;
 }
 
 .nav button:hover:not(:disabled) {
-  background: var(--kw-surface-2);
+  background: none;
   color: var(--kw-text);
 }
 
 .nav button[aria-current="page"] {
-  background: color-mix(in srgb, var(--kw-accent) 10%, transparent);
-  box-shadow: inset 2px 0 0 var(--kw-accent);
-  color: color-mix(in srgb, var(--kw-accent) 75%, var(--kw-text));
+  box-shadow: inset 0 -2px 0 var(--kw-accent);
+  color: var(--kw-text);
   font-weight: 550;
+}
+
+.identity {
+  margin-left: auto;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12.5px;
+  color: var(--kw-muted);
 }
 
 .main {
   padding: 28px 32px;
   max-width: 1100px;
+  margin: 0 auto;
 }
 
 h1 {
@@ -360,7 +360,7 @@ code,
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(0, 0, 0, 0.45);
   display: grid;
   place-items: center;
   padding: 20px;
@@ -370,7 +370,7 @@ code,
   background: var(--kw-surface);
   border-radius: calc(var(--kw-radius) + 4px);
   border: 1px solid var(--kw-border);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.25);
   padding: 20px;
   width: min(560px, 100%);
   max-height: 90vh;
