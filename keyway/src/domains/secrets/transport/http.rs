@@ -276,8 +276,8 @@ async fn create(
                 &body.store,
                 &body.name,
             )
-                .version(&version.id)
-                .note(&body.note),
+            .version(&version.id)
+            .note(&body.note),
         )
         .await
         .map_err(ApiError::Internal)?;
