@@ -1,5 +1,5 @@
 // What the schema guarantees, against a real PostgreSQL — the Go carry-over
-// of keyway/tests/schema.rs. Every rule here is one the service would
+// of the Rust crate's schema tests. Every rule here is one the service would
 // otherwise have to remember on every code path, and a rule enforced in one
 // place cannot be forgotten in another.
 //

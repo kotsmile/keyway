@@ -135,9 +135,19 @@ widen access but must never destroy a secret. The reasoning is in
 
 ## Running it
 
+Build from source (Go 1.26+):
+
 ```bash
-keyway-server --config config.yml migrate   # its own command, never on boot
-keyway-server --config config.yml serve
+go build -o keywayd ./cmd/api   # the server
+go build -o keyway  ./cmd/cli   # the CLI
+```
+
+The dashboard builds separately — see `keyway-dashboard/` (pnpm; the compose
+quickstart and the Helm chart use its published image).
+
+```bash
+keywayd --config config.yml migrate   # its own command, never on boot
+keywayd --config config.yml serve
 ```
 
 `migrate` is separate on purpose: three replicas racing to migrate during a
@@ -156,10 +166,10 @@ inventory to anyone who can reach a scrape endpoint. Traces go to OTLP when
 - **[docs/adr/](docs/adr/)** — why things are shaped as they are, including the
   decisions a reader would otherwise reasonably want to reverse.
 
-The backend is laid out by domain (`secrets`, `access`, `identity`, `tokens`,
-`audit`). Each owns its `entity` (rules, no I/O), `infra` (adapters) and
-`transport`. Services are generic over the repository traits their domain
-declares, so the rules are testable with no database and no network.
+The backend is laid out by domain (`internal/domains/{secrets,access,identity,tokens,audit}`).
+Each owns its `entity` (rules, no I/O), `infra` (adapters) and `transport`.
+Services depend on the repository interfaces their domain declares, so the
+rules are testable with no database and no network.
 
 ## Status
 

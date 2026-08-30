@@ -1,0 +1,6 @@
+# Keeps the dashboard's node_modules and local run output out of the Go
+# image's build context; the Dockerfile COPYs only the Go tree anyway.
+.git
+e2e/out
+keyway-dashboard/node_modules
+keyway-dashboard/dist

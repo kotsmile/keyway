@@ -42,7 +42,7 @@ services:
     environment:
       PGPASSWORD: keyway
       KEYWAY_KEY: AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=
-      RUST_LOG: info,keyway=debug
+      KEYWAY_LOG: debug
     ports:
       - "8080:8080"
       # The metrics port, separate from the API's. In a real deployment this

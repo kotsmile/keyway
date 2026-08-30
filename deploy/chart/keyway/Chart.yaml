@@ -5,6 +5,13 @@ description: >-
   already runs, which owns who may see what and records every look.
 type: application
 # The chart's own version; bumped when templates change.
-version: 0.1.0
+version: 0.1.1
 # The keyway version the image tags default to; follows the release tags.
 appVersion: "0.1.0"
+annotations:
+  # Since 0.1.1 the backend image's entrypoint is `keywayd` (the Go server)
+  # rather than `keyway-server` (the Rust one, removed at the cutover,
+  # kotsmile/keyway#30). The templates pass only args, so rendered manifests
+  # are unchanged — but the chart requires a backend image from after the
+  # cutover.
+  keyway.dev/entrypoint: keywayd

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The compose end-to-end half of the parity gate (kotsmile/keyway#29): the
-# unchanged clients against the Go server, on a schema the Rust server
-# migrated. Run from anywhere; needs docker, go, python3, pnpm (or npm) and —
-# for the best-effort halves — cargo.
+# unchanged clients against the Go server, on a schema shaped the way the
+# Rust server left deployed databases (the frozen e2e/rust-migrations
+# fixtures). Run from anywhere; needs docker, go, python3 and pnpm (or npm).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -27,7 +27,6 @@ status_of() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 
 cleanup() {
   [ -n "${DASH_PID:-}" ] && { kill "$DASH_PID" 2>/dev/null; wait "$DASH_PID" 2>/dev/null; } || true
-  [ -n "${RUST_PID:-}" ] && { kill "$RUST_PID" 2>/dev/null; wait "$RUST_PID" 2>/dev/null; } || true
   "${COMPOSE[@]}" down -v >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -37,11 +36,12 @@ step "1. postgres:18, simulating a database the Rust server migrated"
 "${COMPOSE[@]}" down -v >/dev/null 2>&1 || true
 "${COMPOSE[@]}" up -d --wait postgres
 
-# The Rust crate's own migration files, raw — no goose markers anywhere near
-# them, exactly as sqlx applied them.
-for file in keyway/migrations/0001_init.sql \
-            keyway/migrations/0002_own_store.sql \
-            keyway/migrations/0003_audit_secret_id.sql; do
+# The Rust server's own migration files, raw — no goose markers anywhere near
+# them, exactly as sqlx applied them. Frozen in e2e/rust-migrations since the
+# crates were deleted at the cutover (#30); see the README there.
+for file in e2e/rust-migrations/0001_init.sql \
+            e2e/rust-migrations/0002_own_store.sql \
+            e2e/rust-migrations/0003_audit_secret_id.sql; do
   if grep -q '+goose' "$file"; then
     fail "$file carries goose markers; wanted the sqlx originals"
   fi
@@ -106,7 +106,7 @@ echo "OK: $TOKEN_ID"
 
 # --- 5. the Go CLI -----------------------------------------------------------
 step "5. the Go CLI end-to-end"
-go build -o "$OUT/keyway" ./cmd/keyway
+go build -o "$OUT/keyway" ./cmd/cli
 kw() { "$OUT/keyway" --url "$BASE" --token "$TOKEN" "$@"; }
 
 # An API token carries no roles (ADR-0004), in Rust and in Go alike — so
@@ -145,7 +145,7 @@ echo "$patched" | fields id state
 
 # The CLI's Grant wire type carries exactly what the Rust one did — id,
 # subject_kind, subject, level, keys, granted_by, and deliberately no
-# timestamps (keyway-cli/src/wire.rs). The timestamped view is asserted over
+# timestamps (cmd/cli/internal/wire). The timestamped view is asserted over
 # raw HTTP in step 6.
 grant="$(kw delegate "$ID" --group "SRE Team" --level read --key db_password --days 7 --note "on call" --json)"
 echo "$grant" | fields id subject_kind subject level keys granted_by
@@ -269,47 +269,20 @@ echo
 echo "NOTE: no live OIDC issuer runs in this compose file, so the sign-in"
 echo "callback flow stays covered by unit tests only (internal/domains/identity)."
 
-# --- 7. the Rust CLI (best effort) -------------------------------------------
-step "7. the Rust CLI, if the local toolchain can build it"
-if cargo build -p keyway-cli 2> "$OUT/rust-cli-build.log"; then
-  # A fresh token: the one above was revoked by the probe.
-  TOKEN="$(curl -fsS -X POST -H 'content-type: application/json' -d '{"name":"rust-cli","days":1}' $BASE/api/tokens | json_get '"token"')"
-  rkw() { target/debug/keyway --url "$BASE" --token "$TOKEN" "$@"; }
-  rkw list | grep -q db-creds || fail "rust cli: list"
-  [ "$(rkw get "$ID" --key db_password)" = "hunter3" ] || fail "rust cli: get"
-  rkw view "$ID" --json | fields id store name level basis
-  [ "$(rkw patch "$ID" --value '{"db_password":"hunter4","api_key":"abc"}' --json | json_get '"id"')" = "3" ] || fail "rust cli: patch"
-  rkw delegate "$ID" --user carol --level guest --json | fields id subject_kind subject level
-  echo "OK: the Rust CLI ran the same flows against the Go server"
-else
-  echo "SKIPPED: cargo build -p keyway-cli failed under $(rustc --version 2>/dev/null || echo 'no rustc')"
-  echo "         (known: icu_* transitive deps need rustc 1.88; see $OUT/rust-cli-build.log)."
-  echo "         The CLI wire behaviour is covered by cmd/keyway/internal/wire tests instead."
-fi
+# --- 7. the Rust CLI (removed at cutover) ------------------------------------
+step "7. the Rust CLI"
+echo "SKIPPED: the Rust crates were removed at the cutover (kotsmile/keyway#30);"
+echo "         there is no Rust CLI to build. Its wire behaviour stays pinned by"
+echo "         the cmd/cli/internal/wire and cmd/cli/internal/output tests."
 
-# --- 8. the differential probe (best effort) ---------------------------------
-step "8. Rust server vs Go server on identically seeded databases, if it builds"
-if cargo build -p keyway 2> "$OUT/rust-server-build.log"; then
-  echo "SELECT 'CREATE DATABASE keyway_rust' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname='keyway_rust')\\gexec" | "${PSQL[@]}"
-  for file in keyway/migrations/*.sql; do
-    docker exec -i keyway-e2e-postgres psql -qtA -v ON_ERROR_STOP=1 -U keyway -d keyway_rust < "$file" > /dev/null
-  done
-  sed -e 's/addr: "postgres:5432"/addr: "127.0.0.1:15517"/' \
-      -e 's/name: "keyway"/name: "keyway_rust"/' \
-      -e 's/address: ":8080"/address: ":18081"/' \
-      -e 's/metrics_address: ":9090"/metrics_address: ":19091"/' \
-      e2e/config.yml > "$OUT/config-rust.yml"
-  target/debug/keyway-server serve -c "$OUT/config-rust.yml" > "$OUT/rust-server.log" 2>&1 &
-  RUST_PID=$!
-  for _ in $(seq 30); do curl -fsS http://127.0.0.1:18081/healthz > /dev/null 2>&1 && break; sleep 1; done
-  python3 e2e/differ.py "$BASE" http://127.0.0.1:18081 | tee "$OUT/differ.txt"
-else
-  echo "SKIPPED: cargo build -p keyway failed under $(rustc --version 2>/dev/null || echo 'no rustc')"
-  echo "         (see $OUT/rust-server-build.log). The same cases are pinned Go-side against"
-  echo "         the Rust sources: basis wire string + ?key= semantics in"
-  echo "         internal/domains/secrets/transport/http_test.go, statuses and two-caller"
-  echo "         flows in internal/router/parity_test.go, golden Rust ciphertext/token"
-  echo "         vectors in the crypto and tokens entity tests."
-fi
+# --- 8. the differential probe (removed at cutover) --------------------------
+step "8. Rust server vs Go server"
+echo "SKIPPED: the Rust server was removed at the cutover (kotsmile/keyway#30);"
+echo "         there is nothing left to diff against. The same cases are pinned"
+echo "         Go-side against the Rust sources as they last shipped: basis wire"
+echo "         string + ?key= semantics in internal/domains/secrets/transport/"
+echo "         http_test.go, statuses and two-caller flows in internal/router/"
+echo "         parity_test.go, golden Rust ciphertext/token vectors in the"
+echo "         crypto and tokens entity tests."
 
 step "PASSED: the e2e gate is green"
