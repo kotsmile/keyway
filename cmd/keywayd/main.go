@@ -6,7 +6,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
 
@@ -55,13 +54,12 @@ func main() {
 	root.AddCommand(&cobra.Command{
 		Use:   "serve",
 		Short: "Run the HTTP service",
-		RunE: func(_ *cobra.Command, _ []string) error {
-			// Loaded so a broken file fails here too, not only under Rust.
-			if _, err := config.Load(configPath); err != nil {
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, err := config.Load(configPath)
+			if err != nil {
 				return err
 			}
-			return errors.New(
-				"the Go port does not serve yet; the Rust server is still the one that ships (kotsmile/keyway#21)")
+			return serve(cmd.Context(), cfg)
 		},
 	})
 
