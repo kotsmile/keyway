@@ -166,8 +166,10 @@ inventory to anyone who can reach a scrape endpoint. Traces go to OTLP when
 - **[docs/adr/](docs/adr/)** — why things are shaped as they are, including the
   decisions a reader would otherwise reasonably want to reverse.
 
-The backend is laid out by domain (`internal/domains/{secrets,access,identity,tokens,audit}`).
-Each owns its `entity` (rules, no I/O), `infra` (adapters) and `transport`.
+The backend is laid out by domain (`internal/{secrets,access,identity,tokens,audit}`).
+Each owns its `entity` (rules, no I/O), `service` (application code) and
+`infra` (adapters); the HTTP handlers for all of them live together in
+`internal/transport/http`, and `config/` sits at the repo root.
 Services depend on the repository interfaces their domain declares, so the
 rules are testable with no database and no network.
 

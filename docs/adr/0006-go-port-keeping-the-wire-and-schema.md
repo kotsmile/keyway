@@ -25,3 +25,11 @@ alongside the Rust crates, which are deleted in one commit once parity passes.
 > gate passed (#29) and the crates, the Cargo manifests and the `.sqlx` cache
 > are gone; the Rust migrations survive as frozen fixtures in
 > `e2e/rust-migrations/`, and everything else Rust lives in `git log` only.
+
+> 2026-08-30, layout note: an architecture review moved the tree to the siren
+> reference structure, superseding the "mirror the Rust tree" layout rule
+> above: `config/` at the repo root, domains directly under `internal/` with
+> the application code in a `service` subpackage, all HTTP transport merged
+> into `internal/transport/http`, and the full serve() wiring in
+> `cmd/api/main.go`. The drop-in rules stand unchanged — wire format, schema,
+> and config vocabulary are untouched by the move.

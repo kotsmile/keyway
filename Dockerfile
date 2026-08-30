@@ -13,6 +13,7 @@ RUN go mod download
 COPY embed.go ./
 COPY migrations ./migrations
 COPY cmd ./cmd
+COPY config ./config
 COPY internal ./internal
 RUN CGO_ENABLED=0 go build -trimpath -o /out/keywayd ./cmd/api
 
