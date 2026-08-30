@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -67,10 +68,14 @@ func viewOf(secret entity.Secret, access accessentity.Access) SecretView {
 // lowercased. For a delegated grant that was `delegated { subject: "sre" }`,
 // subject and all — the clients compare only "owner" and "admin" exactly and
 // print the rest, so the odd-looking string is the compatible one.
+//
+// strconv.Quote rather than json.Marshal: Marshal HTML-escapes `<`, `>` and
+// `&` into < and friends, which Rust's {:?} never did. Quote matches the
+// Debug escaping for printable text — quotes and backslashes escaped,
+// everything else verbatim.
 func basisWire(basis accessentity.Basis) string {
 	if subject, ok := basis.DelegatedTo(); ok {
-		quoted, _ := json.Marshal(subject)
-		return strings.ToLower("delegated { subject: " + string(quoted) + " }")
+		return strings.ToLower("delegated { subject: " + strconv.Quote(subject) + " }")
 	}
 	return basis.String()
 }

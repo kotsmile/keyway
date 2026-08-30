@@ -1,0 +1,29 @@
+# The gate's deployment: dev mode (no issuer), one keyway own Store.
+#
+# With no issuer keywayd serves as `dev` holding admin and create — every
+# authorisation decision is still made, so this behaves like production minus
+# the redirect (cmd/keywayd/serve.go).
+server:
+  address: ":8080"
+  metrics_address: ":9090"
+
+postgres:
+  addr: "postgres:5432"
+  name: "keyway"
+  user: "keyway"
+  password: "keyway"
+  sslmode: "disable"
+
+oidc:
+  dev_user: "dev"
+  dev_roles: ["admin", "create"]
+
+stores:
+  - id: "local"
+    type: "keyway"
+    title: "The local vault"
+    allow: ["read", "edit", "create", "delete"]
+    key: "${env:KEYWAY_E2E_AES_KEY}"
+
+branding:
+  name: "keyway e2e"
