@@ -2,7 +2,7 @@
 //
 // Its own types rather than the backend's, so the CLI stays a small binary
 // that formats output instead of a copy of the server. That is also why this
-// package must never import internal/domains or internal/config.
+// package must never import the server domains under internal/ or config.
 package wire
 
 import (

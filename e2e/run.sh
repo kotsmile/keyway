@@ -49,7 +49,7 @@ for file in e2e/rust-migrations/0001_init.sql \
 done
 
 # The history table as sqlx recorded it (the shape adoptSqlxHistory in
-# internal/infra/postgres/postgres.go reads: only `version` matters to Go).
+# internal/postgres/postgres.go reads: only `version` matters to Go).
 "${PSQL[@]}" > /dev/null <<'SQL'
 CREATE TABLE _sqlx_migrations (
     version        BIGINT PRIMARY KEY,
@@ -267,7 +267,7 @@ echo "OK: every probe answered the Rust statuses"
 
 echo
 echo "NOTE: no live OIDC issuer runs in this compose file, so the sign-in"
-echo "callback flow stays covered by unit tests only (internal/domains/identity)."
+echo "callback flow stays covered by unit tests only (internal/identity)."
 
 # --- 7. the Rust CLI (removed at cutover) ------------------------------------
 step "7. the Rust CLI"
@@ -280,8 +280,8 @@ step "8. Rust server vs Go server"
 echo "SKIPPED: the Rust server was removed at the cutover (kotsmile/keyway#30);"
 echo "         there is nothing left to diff against. The same cases are pinned"
 echo "         Go-side against the Rust sources as they last shipped: basis wire"
-echo "         string + ?key= semantics in internal/domains/secrets/transport/"
-echo "         http_test.go, statuses and two-caller flows in internal/router/"
+echo "         string + ?key= semantics in internal/transport/http/secrets_test.go,"
+echo "         statuses and two-caller flows in internal/transport/http/"
 echo "         parity_test.go, golden Rust ciphertext/token vectors in the"
 echo "         crypto and tokens entity tests."
 
