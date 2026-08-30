@@ -5,3 +5,4 @@ dist/
 *.tsbuildinfo
 docker-compose.override.yml
 .claude/
+e2e/out/
