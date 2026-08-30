@@ -1,7 +1,6 @@
-# Keeps the Rust build artefacts and the dashboard's node_modules out of the
+# Keeps the dashboard's node_modules and the e2e run's own output out of the
 # Go image's build context.
 .git
-target
 e2e/out
 keyway-dashboard/node_modules
 keyway-dashboard/dist

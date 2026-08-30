@@ -20,3 +20,8 @@ entrypoints over an `internal/` tree mirroring the existing domain split
 `config`). Warrant contributes tooling conventions only (sqlx, goose, embedded
 migrations, CI shape), not layout. Go lands at the repo root on `main`
 alongside the Rust crates, which are deleted in one commit once parity passes.
+
+> 2026-08-30: the cutover landed (kotsmile/keyway#30, this commit). The parity
+> gate passed (#29) and the crates, the Cargo manifests and the `.sqlx` cache
+> are gone; the Rust migrations survive as frozen fixtures in
+> `e2e/rust-migrations/`, and everything else Rust lives in `git log` only.

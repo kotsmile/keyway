@@ -1,7 +1,8 @@
-# The parity-gate e2e wiring (kotsmile/keyway#29): the Go server on a
-# Rust-lineage schema, exercised by the unchanged clients. Run via e2e/run.sh,
-# which seeds postgres the way the Rust server would have left it BEFORE
-# keywayd is allowed near it.
+# The e2e wiring, from the parity gate (kotsmile/keyway#29): the Go server on
+# a Rust-lineage schema, exercised by the unchanged clients. Run via
+# e2e/run.sh, which seeds postgres the way the (since-deleted) Rust server
+# left deployed databases BEFORE keywayd is allowed near it — see
+# e2e/rust-migrations/README.md.
 name: keyway-e2e
 services:
   postgres:
@@ -11,10 +12,6 @@ services:
       POSTGRES_USER: keyway
       POSTGRES_PASSWORD: keyway
       POSTGRES_DB: keyway
-    ports:
-      # For the differential probe, which runs a host-built Rust server
-      # against a sibling database when the toolchain can build one.
-      - "15517:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U keyway -d keyway"]
       interval: 1s

@@ -1,7 +1,7 @@
 // The wire spellings the Rust server pinned, tested white-box: `basis` is the
-// lowercased Debug rendering (keyway/src/domains/secrets/transport/http.rs,
-// view_of), and `?key=` reveal answers exactly what serde_json's Value::get
-// answered.
+// lowercased Debug rendering (view_of in the Rust transport, removed at the
+// cutover — see git history), and `?key=` reveal answers exactly what
+// serde_json's Value::get answered.
 package transport
 
 import (

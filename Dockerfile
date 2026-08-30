@@ -1,31 +1,20 @@
 # The keyway backend.
 #
-# Queries are checked against the committed .sqlx cache, so the build needs no
-# database — see SQLX_OFFLINE below.
+# The migrations are embedded (embed.go), so the binary is the whole
+# deployment artefact — no schema files to COPY alongside it and get wrong.
 
-FROM rust:1-slim AS build
+FROM golang:1.26 AS build
 WORKDIR /src
 
-RUN apt-get update \
- && apt-get install -y --no-install-recommends pkg-config libssl-dev \
- && rm -rf /var/lib/apt/lists/*
-
 # Dependencies first, so editing source does not re-download the world.
-COPY Cargo.toml Cargo.lock ./
-COPY keyway/Cargo.toml keyway/
-COPY keyway-cli/Cargo.toml keyway-cli/
-RUN mkdir -p keyway/src keyway-cli/src \
- && echo 'fn main() {}' > keyway/src/main.rs \
- && echo '' > keyway/src/lib.rs \
- && echo 'fn main() {}' > keyway-cli/src/main.rs \
- && cargo build --release --bin keyway-server \
- && rm -rf keyway/src keyway-cli/src
+COPY go.mod go.sum ./
+RUN go mod download
 
-COPY .sqlx .sqlx
-COPY keyway keyway
-COPY keyway-cli keyway-cli
-ENV SQLX_OFFLINE=true
-RUN touch keyway/src/main.rs keyway/src/lib.rs && cargo build --release --bin keyway-server
+COPY embed.go ./
+COPY migrations ./migrations
+COPY cmd ./cmd
+COPY internal ./internal
+RUN CGO_ENABLED=0 go build -trimpath -o /out/keywayd ./cmd/api
 
 FROM debian:trixie-slim
 RUN apt-get update \
@@ -33,10 +22,10 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --system --uid 10001 keyway
 
-COPY --from=build /src/target/release/keyway-server /usr/local/bin/keyway-server
+COPY --from=build /out/keywayd /usr/local/bin/keywayd
 
 # Nothing here needs root, and a secrets console is the last place to keep it.
 USER 10001
 EXPOSE 8080 9090
-ENTRYPOINT ["keyway-server"]
+ENTRYPOINT ["keywayd"]
 CMD ["serve"]
