@@ -32,4 +32,6 @@ alongside the Rust crates, which are deleted in one commit once parity passes.
 > the application code in a `service` subpackage, all HTTP transport merged
 > into `internal/transport/http`, and the full serve() wiring in
 > `cmd/api/main.go`. The drop-in rules stand unchanged — wire format, schema,
-> and config vocabulary are untouched by the move.
+> and config vocabulary are untouched by the move. See
+> [ADR-0007](0007-keyway-is-the-go-services-reference-layout.md) for the
+> decision and [docs/architecture.md](../architecture.md) for the layout itself.

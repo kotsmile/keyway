@@ -1,5 +1,15 @@
 # keyway
 
+## Architecture
+
+Read before moving or adding a file. `docs/architecture.md` is the layout —
+what belongs in `config/`, `cmd/<binary>/main.go`, `internal/<domain>/{entity,
+service,infra}` and `internal/transport/<protocol>/`, which layer may import
+which, and how to add a domain or a backend. `docs/patterns.md` is the
+numbered pattern catalogue that layout assumes; cite patterns by number in
+review. The decision behind both is
+`docs/adr/0007-keyway-is-the-go-services-reference-layout.md`.
+
 ## Agent skills
 
 ### Issue tracker

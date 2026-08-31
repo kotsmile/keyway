@@ -165,6 +165,10 @@ inventory to anyone who can reach a scrape endpoint. Traces go to OTLP when
   Level, Subject, Reveal. Worth ten minutes before reading any code.
 - **[docs/adr/](docs/adr/)** — why things are shaped as they are, including the
   decisions a reader would otherwise reasonably want to reverse.
+- **[docs/architecture.md](docs/architecture.md)** — the layout, the dependency
+  rule, and how to add a domain or a backend.
+- **[docs/patterns.md](docs/patterns.md)** — the numbered rules the code applies
+  consistently, each with the failure it prevents.
 
 The backend is laid out by domain (`internal/{secrets,access,identity,tokens,audit}`).
 Each owns its `entity` (rules, no I/O), `service` (application code) and
