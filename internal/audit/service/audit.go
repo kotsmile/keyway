@@ -11,6 +11,7 @@ import (
 	"context"
 
 	"github.com/kotsmile/keyway/internal/audit/entity"
+	secrets "github.com/kotsmile/keyway/internal/secrets/entity"
 )
 
 // Actor is who is acting, as this domain needs to see them: the handle, and
@@ -28,7 +29,7 @@ type Repo interface {
 	// Append writes one entry. viaToken "" is a browser session and is stored
 	// as NULL, the way the Rust server stored an absent token.
 	Append(ctx context.Context, actor, viaToken string, record entity.Record) error
-	ForSecret(ctx context.Context, store, secret string, limit int64) ([]entity.Entry, error)
+	ForSecret(ctx context.Context, store secrets.StoreID, secret secrets.SecretName, limit int64) ([]entity.Entry, error)
 	Feed(ctx context.Context, limit int64, before *int64) ([]entity.Entry, error)
 }
 
@@ -47,13 +48,23 @@ func NewService(repo Repo) *Service {
 // The actor supplies both the handle and, when the request arrived on one,
 // the token id — taken from the same place, so a caller cannot record a
 // reveal as somebody else by passing the wrong string.
+//
+// An action this build has no constant for is refused HERE rather than by the
+// `action` column's CHECK constraint: the constraint would report a
+// PostgreSQL error naming a constraint, which tells nobody what went wrong,
+// and a rejected write means the thing that just happened went unrecorded.
 func (s *Service) Record(ctx context.Context, actor Actor, record entity.Record) error {
+	if !record.Action.IsKnown() {
+		return &entity.UnknownActionError{Action: record.Action}
+	}
 	viaToken, _ := actor.TokenID()
 	return s.repo.Append(ctx, actor.Handle(), viaToken, record)
 }
 
 // ForSecret is what has been done to one secret, newest first.
-func (s *Service) ForSecret(ctx context.Context, store, secret string, limit int64) ([]entity.Entry, error) {
+func (s *Service) ForSecret(
+	ctx context.Context, store secrets.StoreID, secret secrets.SecretName, limit int64,
+) ([]entity.Entry, error) {
 	return s.repo.ForSecret(ctx, store, secret, limit)
 }
 

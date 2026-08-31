@@ -18,7 +18,6 @@ import (
 	"github.com/kotsmile/keyway/config"
 	accessservice "github.com/kotsmile/keyway/internal/access/service"
 	auditservice "github.com/kotsmile/keyway/internal/audit/service"
-	identityinfra "github.com/kotsmile/keyway/internal/identity/infra"
 	identityservice "github.com/kotsmile/keyway/internal/identity/service"
 	secretsservice "github.com/kotsmile/keyway/internal/secrets/service"
 	tokensservice "github.com/kotsmile/keyway/internal/tokens/service"
@@ -34,7 +33,14 @@ type State struct {
 	Auth     *Auth
 	Branding config.Branding
 	// Oidc is the configured issuer, nil in dev mode.
-	Oidc         *identityinfra.Oidc
+	//
+	// The identity domain's port, not the OIDC client that implements it:
+	// this package should not be able to reach a discovery document or a PKCE
+	// verifier, and holding the concrete type is what made that possible.
+	// Nil is load-bearing here — every handler that redirects checks it — so
+	// whatever builds a State must leave it nil rather than store a nil
+	// pointer inside a non-nil interface.
+	Oidc         identityservice.Issuer
 	SessionHours int64
 	// Codec seals the session and pending-login cookies.
 	Codec *Codec

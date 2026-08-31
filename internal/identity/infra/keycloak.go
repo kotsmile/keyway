@@ -2,11 +2,18 @@
 //
 // Optional, and off unless configured. What it buys back is the one property
 // keyway loses by not asking an identity provider on every request: disabling
-// an account cuts every API token it issued, within a cache window (ADR-0004).
+// an account cuts every API token it issued, within the window the identity
+// service's CachedDirectory allows (ADR-0004).
 //
 // It is Keycloak-specific because the admin REST API is Keycloak's, not
 // OIDC's — which is exactly why this is an interface with an implementation
 // rather than something baked into the identity domain.
+//
+// It asks Keycloak EVERY time it is called and remembers nothing. How stale
+// an answer may be is a policy about how fast a revocation must bite, and it
+// lives in identity/service.CachedDirectory, which wraps this. What is left
+// here is translation: a service-account grant, two admin endpoints, and the
+// shape they answer in.
 
 package infra
 
@@ -16,22 +23,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"slices"
 	"strings"
-	"sync"
-	"time"
 
+	identityentity "github.com/kotsmile/keyway/internal/identity/entity"
 	identityservice "github.com/kotsmile/keyway/internal/identity/service"
 )
-
-// cacheFor is how long a resolved subject is trusted.
-//
-// The same window a copied claim gets, and for the same reason: it is the
-// longest a change may take to bite. Shortening it does not make the system
-// safer so much as it makes the identity provider a hard dependency of every
-// request; lengthening it quietly reintroduces the stale-membership problem
-// this exists to avoid.
-const cacheFor = 5 * time.Minute
 
 // KeycloakDirectory answers who somebody is right now, from Keycloak.
 type KeycloakDirectory struct {
@@ -40,18 +36,6 @@ type KeycloakDirectory struct {
 	clientSecret string
 	tokenURL     string
 	http         *http.Client
-	// now is injectable so a test can age the cache without sleeping.
-	now func() time.Time
-
-	mu    sync.Mutex
-	cache map[string]cacheEntry
-}
-
-// cacheEntry distinguishes "we know they are gone" (a nil answer that IS in
-// the map) from "we do not know yet" (no entry, or one gone stale).
-type cacheEntry struct {
-	at     time.Time
-	answer *identityservice.DirectoryAnswer
 }
 
 type accessToken struct {
@@ -90,35 +74,7 @@ func NewKeycloakDirectory(issuer, clientID, clientSecret string) (*KeycloakDirec
 		clientSecret: clientSecret,
 		tokenURL:     fmt.Sprintf("%s/protocol/openid-connect/token", issuer),
 		http:         &http.Client{},
-		now:          time.Now,
-		cache:        map[string]cacheEntry{},
 	}, nil
-}
-
-// cached is what the cache had. The second return is false for "we do not
-// know yet"; a true beside a nil answer means "we know they are gone".
-func (d *KeycloakDirectory) cached(handle string) (*identityservice.DirectoryAnswer, bool) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	entry, ok := d.cache[handle]
-	if !ok || d.now().Sub(entry.at) >= cacheFor {
-		return nil, false
-	}
-	if entry.answer == nil {
-		return nil, true
-	}
-	// A copy, so a caller mutating the answer cannot poison what the next
-	// request reads.
-	return &identityservice.DirectoryAnswer{
-		Enabled: entry.answer.Enabled,
-		Groups:  slices.Clone(entry.answer.Groups),
-	}, true
-}
-
-func (d *KeycloakDirectory) remember(handle string, answer *identityservice.DirectoryAnswer) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.cache[handle] = cacheEntry{at: d.now(), answer: answer}
 }
 
 // adminToken is the client's own access token, via the service account.
@@ -176,12 +132,10 @@ func (d *KeycloakDirectory) getJSON(ctx context.Context, endpoint, token string,
 	return nil
 }
 
-// Resolve implements identityservice.Directory.
-func (d *KeycloakDirectory) Resolve(ctx context.Context, handle string) (*identityservice.DirectoryAnswer, error) {
-	if answer, known := d.cached(handle); known {
-		return answer, nil
-	}
-
+// Resolve implements identityservice.Directory. It asks Keycloak every time.
+func (d *KeycloakDirectory) Resolve(
+	ctx context.Context, handle identityentity.Handle,
+) (*identityservice.DirectoryAnswer, error) {
 	token, err := d.adminToken(ctx)
 	if err != nil {
 		return nil, err
@@ -190,7 +144,7 @@ func (d *KeycloakDirectory) Resolve(ctx context.Context, handle string) (*identi
 	// `exact` matters: without it Keycloak substring-matches, and `alice`
 	// would return `alice2` as well.
 	lookup := fmt.Sprintf("%s/users?%s", d.adminBase, url.Values{
-		"username": {handle},
+		"username": {handle.String()},
 		"exact":    {"true"},
 	}.Encode())
 	var users []kcUser
@@ -198,16 +152,15 @@ func (d *KeycloakDirectory) Resolve(ctx context.Context, handle string) (*identi
 		return nil, err
 	}
 
+	// Gone from the directory entirely. A nil answer, not an error: "there is
+	// no such person" is something the directory knows, and the service turns
+	// it into "this token acts as nobody".
 	if len(users) == 0 {
-		// Gone from the directory entirely. Remembered as absent so a
-		// departed account does not cost a lookup on every request.
-		d.remember(handle, nil)
 		return nil, nil
 	}
 	user := users[0]
 
 	if !user.Enabled {
-		d.remember(handle, &identityservice.DirectoryAnswer{Enabled: false})
 		return &identityservice.DirectoryAnswer{Enabled: false}, nil
 	}
 
@@ -222,16 +175,19 @@ func (d *KeycloakDirectory) Resolve(ctx context.Context, handle string) (*identi
 		// Paths, matched exactly. keyway parses no structure out of a group
 		// name (ADR-0003), so a realm wanting a grant to a parent group to
 		// cover the teams inside it emits the ancestors.
-		Groups: make([]string, len(groups)),
+		Groups: make([]identityentity.GroupName, 0, len(groups)),
 	}
-	for i, group := range groups {
-		answer.Groups[i] = group.Path
+	for _, group := range groups {
+		// A group Keycloak reports without a path is not a group anything
+		// here could match a grant against; skipping it is the same reading
+		// the identity domain gives an empty group name.
+		name, err := identityentity.NewGroupName(group.Path)
+		if err != nil {
+			continue
+		}
+		answer.Groups = append(answer.Groups, name)
 	}
-	// A copy goes into the cache so a caller mutating the answer cannot
-	// poison what the next request reads.
-	d.remember(handle, &identityservice.DirectoryAnswer{
-		Enabled: true,
-		Groups:  slices.Clone(answer.Groups),
-	})
 	return answer, nil
 }
+
+var _ identityservice.Directory = (*KeycloakDirectory)(nil)

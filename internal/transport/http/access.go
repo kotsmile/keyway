@@ -17,6 +17,7 @@ import (
 	auditentity "github.com/kotsmile/keyway/internal/audit/entity"
 	identityentity "github.com/kotsmile/keyway/internal/identity/entity"
 	secretsentity "github.com/kotsmile/keyway/internal/secrets/entity"
+	secretsservice "github.com/kotsmile/keyway/internal/secrets/service"
 )
 
 // mountAccess registers the grant routes on the authenticated API router.
@@ -245,19 +246,32 @@ func uuidParam(r *http.Request, param string) (uuid.UUID, error) {
 	return id, nil
 }
 
-// locate is which secret a uuid names, for a caller who can already see it.
+// resolve finds the secret a uuid names, and how far this caller gets on it.
 //
-// The same scan secrets.go's resolve does, duplicated the way the Rust
-// domains each carried their own — a shared resolver would couple the two
-// domains over three lines of loop.
-func locate(
+// Returns not-found both for a secret that does not exist and for one this
+// caller may not see: a distinguishable answer would let anyone enumerate the
+// inventory.
+//
+// A SCAN of what the caller can already see, deliberately — a lookup table
+// would be a second source of truth about where a secret lives, and it would
+// go stale the moment somebody renamed one outside keyway. That decision
+// stands; what does not is having had TWO copies of the scan, one here for
+// grants and one in secrets.go, each with its own idea of what a
+// caller-invisible secret answers. They agreed, until one of them changed.
+//
+// It is O(stores × secrets) per request and each store's List is one backend
+// call. That is the cost of the design, not an accident of this function:
+// the listing every screen already performs is the same scan.
+func resolve(
 	r *http.Request, state *State, actor identityentity.Actor, id uuid.UUID,
-) (string, string, error) {
+) (*secretsservice.Store, secretsentity.Secret, accessentity.Access, error) {
 	ctx := r.Context()
 	now := state.Now()
 	for _, store := range state.Stores.All() {
 		listed, err := store.List(ctx)
 		if err != nil {
+			// One unreachable cloud project must not black out every route
+			// that addresses a secret by uuid.
 			continue
 		}
 		for _, secret := range listed {
@@ -266,13 +280,25 @@ func locate(
 			}
 			access, err := state.Access.AccessFor(ctx, actor, secret.Store, secret.Name, now)
 			if err != nil {
-				return "", "", Internal(err)
+				return nil, secretsentity.Secret{}, accessentity.Access{}, Internal(err)
 			}
 			if !access.IsVisible() {
-				return "", "", NotFound()
+				return nil, secretsentity.Secret{}, accessentity.Access{}, NotFound()
 			}
-			return secret.Store, secret.Name, nil
+			return store, secret, access, nil
 		}
 	}
-	return "", "", NotFound()
+	return nil, secretsentity.Secret{}, accessentity.Access{}, NotFound()
+}
+
+// locate is which secret a uuid names, for a caller who can already see it —
+// resolve, for the routes that need the name and not the Store.
+func locate(
+	r *http.Request, state *State, actor identityentity.Actor, id uuid.UUID,
+) (secretsentity.StoreID, secretsentity.SecretName, error) {
+	_, secret, _, err := resolve(r, state, actor, id)
+	if err != nil {
+		return "", "", err
+	}
+	return secret.Store, secret.Name, nil
 }

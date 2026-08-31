@@ -10,7 +10,7 @@ import (
 )
 
 func TestADelegationToTheHandleAddressesTheCaller(t *testing.T) {
-	actor := NewActor("alice", []string{"SRE"}, nil)
+	actor := NewActor("alice", []GroupName{"SRE"}, nil)
 	assert.True(t, actor.IsAddressedBy(access.User("alice")))
 	assert.False(t, actor.IsAddressedBy(access.User("bob")))
 }
@@ -19,7 +19,7 @@ func TestAGroupIsMatchedByExactNameOnly(t *testing.T) {
 	// keyway parses no structure out of a group name (ADR-0003): an issuer
 	// wanting a grant to a parent group to cover the teams inside it emits
 	// the ancestors in the claim.
-	actor := NewActor("alice", []string{"/SRE/platform"}, nil)
+	actor := NewActor("alice", []GroupName{"/SRE/platform"}, nil)
 	assert.True(t, actor.IsAddressedBy(access.Group("/SRE/platform")))
 	assert.False(t, actor.IsAddressedBy(access.Group("/SRE")),
 		"an ancestor not in the claim is not a membership")
@@ -48,7 +48,7 @@ func TestAdminAndCreateAreIndependentRoles(t *testing.T) {
 }
 
 func TestSubjectsListsTheHandleThenEveryGroup(t *testing.T) {
-	actor := NewActor("alice", []string{"platform", "SRE"}, nil)
+	actor := NewActor("alice", []GroupName{"platform", "SRE"}, nil)
 	assert.Equal(t, []access.Subject{
 		access.User("alice"),
 		access.Group("SRE"),
@@ -96,7 +96,7 @@ func TestARoleNameNobodyKnowsIsRefused(t *testing.T) {
 func TestGroupAndRoleNamesAreSortedAndDeduplicated(t *testing.T) {
 	// Membership is a set, not a list: the order a claim spelled it in
 	// carries no meaning, and a console wants a stable one.
-	actor := NewActor("alice", []string{"platform", "SRE", "platform"},
+	actor := NewActor("alice", []GroupName{"platform", "SRE", "platform"},
 		[]Role{RoleCreate, RoleAdmin, RoleCreate})
 	assert.Equal(t, []string{"SRE", "platform"}, actor.GroupNames())
 	assert.Equal(t, []string{"admin", "create"}, actor.RoleNames())

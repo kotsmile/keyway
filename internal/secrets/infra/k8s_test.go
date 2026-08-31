@@ -8,6 +8,8 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/kotsmile/keyway/internal/secrets/entity"
 )
 
 func k8sSecret(data map[string]string, labels map[string]string) *corev1.Secret {
@@ -32,10 +34,10 @@ func TestAKubernetesSecretBecomesAKeywayOne(t *testing.T) {
 	))
 	require.True(t, ok, "converts")
 
-	assert.Equal(t, "db-creds", converted.Name)
+	assert.Equal(t, entity.SecretName("db-creds"), converted.Name)
 	assert.Equal(t, "infra", converted.Labels["team"])
 	// The only version id a Kubernetes Secret has.
-	assert.Equal(t, "12345", converted.LatestVersion)
+	assert.Equal(t, entity.VersionID("12345"), converted.LatestVersion)
 }
 
 func TestAMultiKeySecretBecomesFlatJSON(t *testing.T) {

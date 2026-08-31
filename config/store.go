@@ -2,9 +2,71 @@ package config
 
 import (
 	"fmt"
+	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	secretsentity "github.com/kotsmile/keyway/internal/secrets/entity"
 )
+
+// StoreKind names which SecretManager serves a Store — the `type:` word.
+//
+// A closed list, because it is not a name a deployment invents: it selects
+// one of the implementations compiled into this binary. Refusing an unknown
+// one at parse rather than at mount means the message says which word was
+// wrong before anything has connected to anything.
+type StoreKind string
+
+const (
+	// KindKeyway is keyway's own Store, the one backend where keyway holds a
+	// payload rather than pointing at somebody else's.
+	KindKeyway StoreKind = "keyway"
+	KindGcp    StoreKind = "gcp"
+	KindYc     StoreKind = "yc"
+	KindAws    StoreKind = "aws"
+	KindK8s    StoreKind = "k8s"
+)
+
+// StoreKinds is every kind this build has, in the order an error lists them.
+func StoreKinds() []StoreKind {
+	return []StoreKind{KindKeyway, KindGcp, KindYc, KindAws, KindK8s}
+}
+
+// UnknownStoreKindError is a `type:` naming a SecretManager this build does
+// not have.
+//
+// Worth refusing to start over: silently serving four of five declared Stores
+// is worse than not starting, because nobody notices the fifth is missing.
+type UnknownStoreKindError struct {
+	Store string
+	Kind  string
+}
+
+func (e *UnknownStoreKindError) Error() string {
+	return fmt.Sprintf("store %q names an unknown type %q; this build has: %s",
+		e.Store, e.Kind, joinKinds(StoreKinds()))
+}
+
+func joinKinds(kinds []StoreKind) string {
+	words := make([]string, len(kinds))
+	for i, kind := range kinds {
+		words[i] = string(kind)
+	}
+	return strings.Join(words, ", ")
+}
+
+// String is the word the config file spells.
+func (k StoreKind) String() string { return string(k) }
+
+// ParseStoreKind reads a `type:` word.
+func ParseStoreKind(store, word string) (StoreKind, error) {
+	for _, known := range StoreKinds() {
+		if StoreKind(word) == known {
+			return known, nil
+		}
+	}
+	return "", &UnknownStoreKindError{Store: store, Kind: word}
+}
 
 // StoreConfig is one configured backing service.
 //
@@ -15,9 +77,13 @@ import (
 type StoreConfig struct {
 	// ID is the stable handle used in URLs and in the delegations table.
 	// Renaming one orphans its grants, so it is chosen once and left alone.
-	ID string
+	//
+	// The secrets domain's own type: this is the same id a Secret belongs to
+	// and a grant is keyed by, and reading it here is where a deployment's
+	// word becomes one.
+	ID secretsentity.StoreID
 	// Kind names which SecretManager serves it; spelled `type` in the file.
-	Kind string
+	Kind StoreKind
 	// Title is what a person picks from the menu. Falls back to the id.
 	Title string
 	// Allow is what this deployment may do here.
@@ -45,15 +111,19 @@ func (s *StoreConfig) UnmarshalYAML(node *yaml.Node) error {
 	s.Protect = ReconcilerDefaults()
 	s.Settings = map[string]any{}
 	seen := map[string]bool{}
+	// Read as plain words first and turned into their types below: the id has
+	// to be known before the kind can be refused by name, and an error that
+	// cannot say WHICH store was wrong is an error nobody can act on.
+	var id, kind string
 	for i := 0; i+1 < len(node.Content); i += 2 {
 		key, value := node.Content[i], node.Content[i+1]
 		seen[key.Value] = true
 		var err error
 		switch key.Value {
 		case "id":
-			err = value.Decode(&s.ID)
+			err = value.Decode(&id)
 		case "type":
-			err = value.Decode(&s.Kind)
+			err = value.Decode(&kind)
 		case "title":
 			err = value.Decode(&s.Title)
 		case "allow":
@@ -77,13 +147,23 @@ func (s *StoreConfig) UnmarshalYAML(node *yaml.Node) error {
 			return fmt.Errorf("a store is missing the %q field", required)
 		}
 	}
+
+	storeID, err := secretsentity.NewStoreID(id)
+	if err != nil {
+		return err
+	}
+	storeKind, err := ParseStoreKind(id, kind)
+	if err != nil {
+		return err
+	}
+	s.ID, s.Kind = storeID, storeKind
 	return nil
 }
 
 // DisplayTitle is the title, or the id when none was given.
 func (s StoreConfig) DisplayTitle() string {
 	if s.Title == "" {
-		return s.ID
+		return s.ID.String()
 	}
 	return s.Title
 }

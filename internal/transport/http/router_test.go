@@ -40,8 +40,8 @@ import (
 // secrets happy path runs against.
 type fakeManager struct {
 	mu      sync.Mutex
-	store   string
-	secrets map[string]*fakeSecret
+	store   secretsentity.StoreID
+	secrets map[secretsentity.SecretName]*fakeSecret
 }
 
 type fakeSecret struct {
@@ -49,8 +49,8 @@ type fakeSecret struct {
 	payloads [][]byte
 }
 
-func newFakeManager(store string) *fakeManager {
-	return &fakeManager{store: store, secrets: map[string]*fakeSecret{}}
+func newFakeManager(store secretsentity.StoreID) *fakeManager {
+	return &fakeManager{store: store, secrets: map[secretsentity.SecretName]*fakeSecret{}}
 }
 
 func (m *fakeManager) List(context.Context) ([]secretsentity.Secret, error) {
@@ -63,7 +63,7 @@ func (m *fakeManager) List(context.Context) ([]secretsentity.Secret, error) {
 	return out, nil
 }
 
-func (m *fakeManager) Get(_ context.Context, name string) (secretsentity.Secret, error) {
+func (m *fakeManager) Get(_ context.Context, name secretsentity.SecretName) (secretsentity.Secret, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.secrets[name]; !ok {
@@ -72,18 +72,18 @@ func (m *fakeManager) Get(_ context.Context, name string) (secretsentity.Secret,
 	return m.snapshot(name), nil
 }
 
-func (m *fakeManager) snapshot(name string) secretsentity.Secret {
+func (m *fakeManager) snapshot(name secretsentity.SecretName) secretsentity.Secret {
 	held := m.secrets[name]
-	latest := ""
+	var latest secretsentity.VersionID
 	if n := len(held.payloads); n > 0 {
-		latest = strconv.Itoa(n)
+		latest = secretsentity.VersionID(strconv.Itoa(n))
 	}
 	return secretsentity.Secret{
 		Store: m.store, Name: name, Labels: held.labels, LatestVersion: latest,
 	}
 }
 
-func (m *fakeManager) Versions(_ context.Context, name string) ([]secretsentity.Version, error) {
+func (m *fakeManager) Versions(_ context.Context, name secretsentity.SecretName) ([]secretsentity.Version, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	held, ok := m.secrets[name]
@@ -93,30 +93,32 @@ func (m *fakeManager) Versions(_ context.Context, name string) ([]secretsentity.
 	out := []secretsentity.Version{}
 	for i := len(held.payloads); i > 0; i-- {
 		out = append(out, secretsentity.Version{
-			ID: strconv.Itoa(i), State: secretsentity.VersionEnabled,
+			ID: secretsentity.VersionID(strconv.Itoa(i)), State: secretsentity.VersionEnabled,
 		})
 	}
 	return out, nil
 }
 
-func (m *fakeManager) Access(_ context.Context, name, version string) ([]byte, error) {
+func (m *fakeManager) Access(
+	_ context.Context, name secretsentity.SecretName, version secretsentity.VersionID,
+) ([]byte, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	held, ok := m.secrets[name]
 	if !ok {
 		return nil, secretsentity.ErrNotFound
 	}
-	if version == "" {
-		version = strconv.Itoa(len(held.payloads))
+	if version.IsLatest() {
+		version = secretsentity.VersionID(strconv.Itoa(len(held.payloads)))
 	}
-	number, err := strconv.Atoi(version)
+	number, err := strconv.Atoi(version.String())
 	if err != nil || number < 1 || number > len(held.payloads) {
 		return nil, &secretsentity.NoSuchVersionError{Version: version}
 	}
 	return held.payloads[number-1], nil
 }
 
-func (m *fakeManager) SetLabels(_ context.Context, name string, labels secretsentity.Metadata) error {
+func (m *fakeManager) SetLabels(_ context.Context, name secretsentity.SecretName, labels secretsentity.Metadata) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	held, ok := m.secrets[name]
@@ -127,14 +129,14 @@ func (m *fakeManager) SetLabels(_ context.Context, name string, labels secretsen
 	return nil
 }
 
-func (m *fakeManager) Create(_ context.Context, name string, labels secretsentity.Metadata) error {
+func (m *fakeManager) Create(_ context.Context, name secretsentity.SecretName, labels secretsentity.Metadata) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.secrets[name] = &fakeSecret{labels: labels}
 	return nil
 }
 
-func (m *fakeManager) AddVersion(_ context.Context, name string, payload []byte) (secretsentity.Version, error) {
+func (m *fakeManager) AddVersion(_ context.Context, name secretsentity.SecretName, payload []byte) (secretsentity.Version, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	held, ok := m.secrets[name]
@@ -143,11 +145,11 @@ func (m *fakeManager) AddVersion(_ context.Context, name string, payload []byte)
 	}
 	held.payloads = append(held.payloads, payload)
 	return secretsentity.Version{
-		ID: strconv.Itoa(len(held.payloads)), State: secretsentity.VersionEnabled,
+		ID: secretsentity.VersionID(strconv.Itoa(len(held.payloads))), State: secretsentity.VersionEnabled,
 	}, nil
 }
 
-func (m *fakeManager) Delete(_ context.Context, name string) error {
+func (m *fakeManager) Delete(_ context.Context, name secretsentity.SecretName) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.secrets[name]; !ok {
@@ -171,9 +173,13 @@ func newFakeAccessRepo() *fakeAccessRepo {
 	}
 }
 
-func onKey(store, secret string) string { return store + "\x00" + secret }
+func onKey(store secretsentity.StoreID, secret secretsentity.SecretName) string {
+	return store.String() + "\x00" + secret.String()
+}
 
-func (r *fakeAccessRepo) GrantsOn(_ context.Context, store, secret string) ([]accessentity.Delegation, error) {
+func (r *fakeAccessRepo) GrantsOn(
+	_ context.Context, store secretsentity.StoreID, secret secretsentity.SecretName,
+) ([]accessentity.Delegation, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := []accessentity.Delegation{}
@@ -185,7 +191,9 @@ func (r *fakeAccessRepo) GrantsOn(_ context.Context, store, secret string) ([]ac
 	return out, nil
 }
 
-func (r *fakeAccessRepo) OwnerOf(_ context.Context, store, secret string) (*accessentity.Ownership, error) {
+func (r *fakeAccessRepo) OwnerOf(
+	_ context.Context, store secretsentity.StoreID, secret secretsentity.SecretName,
+) (*accessentity.Ownership, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	owner, ok := r.owners[onKey(store, secret)]
@@ -261,7 +269,9 @@ func (r *fakeAuditRepo) Append(_ context.Context, actor, viaToken string, record
 	return nil
 }
 
-func (r *fakeAuditRepo) ForSecret(_ context.Context, store, secret string, _ int64) ([]auditentity.Entry, error) {
+func (r *fakeAuditRepo) ForSecret(
+	_ context.Context, store secretsentity.StoreID, secret secretsentity.SecretName, _ int64,
+) ([]auditentity.Entry, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := []auditentity.Entry{}
@@ -286,11 +296,11 @@ func (r *fakeAuditRepo) Feed(_ context.Context, limit int64, _ *int64) ([]audite
 // fakeTokenRepo is tokens storage in a map.
 type fakeTokenRepo struct {
 	mu     sync.Mutex
-	stored map[string]tokensentity.StoredToken
+	stored map[tokensentity.ID]tokensentity.StoredToken
 }
 
 func newFakeTokenRepo() *fakeTokenRepo {
-	return &fakeTokenRepo{stored: map[string]tokensentity.StoredToken{}}
+	return &fakeTokenRepo{stored: map[tokensentity.ID]tokensentity.StoredToken{}}
 }
 
 func (r *fakeTokenRepo) Insert(_ context.Context, token tokensentity.StoredToken) (time.Time, error) {
@@ -301,7 +311,7 @@ func (r *fakeTokenRepo) Insert(_ context.Context, token tokensentity.StoredToken
 	return token.CreatedAt, nil
 }
 
-func (r *fakeTokenRepo) ByID(_ context.Context, id string) (*tokensentity.StoredToken, error) {
+func (r *fakeTokenRepo) ByID(_ context.Context, id tokensentity.ID) (*tokensentity.StoredToken, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	token, ok := r.stored[id]
@@ -326,7 +336,7 @@ func (r *fakeTokenRepo) ForSubject(_ context.Context, subject string) ([]tokense
 	return out, nil
 }
 
-func (r *fakeTokenRepo) Delete(_ context.Context, subject, id string) (bool, error) {
+func (r *fakeTokenRepo) Delete(_ context.Context, subject string, id tokensentity.ID) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	stored, ok := r.stored[id]
@@ -337,25 +347,25 @@ func (r *fakeTokenRepo) Delete(_ context.Context, subject, id string) (bool, err
 	return true, nil
 }
 
-func (r *fakeTokenRepo) Touch(context.Context, string, time.Time) {}
+func (r *fakeTokenRepo) Touch(context.Context, tokensentity.ID, time.Time) {}
 
 // fakeIdentityRepo remembers sign-ins in a map.
 type fakeIdentityRepo struct {
 	mu    sync.Mutex
-	users map[string]identityentity.RememberedUser
+	users map[identityentity.Handle]identityentity.RememberedUser
 }
 
 func (r *fakeIdentityRepo) Remember(_ context.Context, user *identityentity.RememberedUser) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.users == nil {
-		r.users = map[string]identityentity.RememberedUser{}
+		r.users = map[identityentity.Handle]identityentity.RememberedUser{}
 	}
 	r.users[user.Handle] = *user
 	return nil
 }
 
-func (r *fakeIdentityRepo) Recall(_ context.Context, handle string) (*identityentity.RememberedUser, error) {
+func (r *fakeIdentityRepo) Recall(_ context.Context, handle identityentity.Handle) (*identityentity.RememberedUser, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	user, ok := r.users[handle]
@@ -376,10 +386,10 @@ func serverUnderTest(t *testing.T, devRoles ...identityentity.Role) *httptest.Se
 	registry, err := secretsservice.NewRegistry([]*secretsservice.Store{
 		secretsservice.NewStore(config.StoreConfig{
 			ID:    "vault",
-			Kind:  "keyway",
+			Kind:  config.KindKeyway,
 			Title: "The test vault",
 			Allow: []config.Verb{config.Read, config.Edit, config.Create, config.Delete},
-		}, newFakeManager("vault")),
+		}, newFakeManager("vault"), nil),
 	})
 	require.NoError(t, err)
 
@@ -398,7 +408,7 @@ func serverUnderTest(t *testing.T, devRoles ...identityentity.Role) *httptest.Se
 		Auth: &Auth{
 			Tokens:   tokenService,
 			Identity: identityService,
-			Dev:      &DevActor{Handle: "dev", Roles: devRoles},
+			Dev:      &identityservice.DevActor{Handle: "dev", Roles: devRoles},
 			Codec:    codec,
 		},
 		Branding:     config.Branding{Name: "keyway", Accent: "#2563eb"},

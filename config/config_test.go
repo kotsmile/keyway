@@ -6,6 +6,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	secretsentity "github.com/kotsmile/keyway/internal/secrets/entity"
 )
 
 const sample = `
@@ -50,8 +52,8 @@ func TestReadsAWholeFile(t *testing.T) {
 	assert.Equal(t, "hunter2", config.Postgres.Password)
 	assert.Equal(t, "s3cret", config.Oidc.ClientSecret)
 	require.Len(t, config.Stores, 1)
-	assert.Equal(t, "gcp-prod", config.Stores[0].ID)
-	assert.Equal(t, "gcp", config.Stores[0].Kind)
+	assert.Equal(t, secretsentity.StoreID("gcp-prod"), config.Stores[0].ID)
+	assert.Equal(t, KindGcp, config.Stores[0].Kind)
 	assert.True(t, config.Stores[0].Can(Read))
 	assert.False(t, config.Stores[0].Can(Delete))
 }

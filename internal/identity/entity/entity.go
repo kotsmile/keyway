@@ -14,8 +14,8 @@ import (
 // of this from the claim, and an API token names a handle and takes the
 // groups keyway remembered (ADR-0004).
 type Actor struct {
-	handle string
-	groups map[string]struct{}
+	handle Handle
+	groups map[GroupName]struct{}
 	roles  map[Role]struct{}
 	// viaToken is the public id of the API token this request arrived on, if
 	// it did. Kept so an audit row can name WHICH credential acted, not merely
@@ -67,12 +67,42 @@ func ParseRole(name string) (Role, bool) {
 	return 0, false
 }
 
+// RoleWords is every role name this build knows, in order — what an error or
+// a warning lists when it has just refused a word.
+func RoleWords() []string {
+	return []string{RoleAdmin.String(), RoleCreate.String()}
+}
+
+// ParseRoles reads a list of role words, keeping the ones this build knows
+// and reporting the rest.
+//
+// The rule is accept-and-warn, and it is written down HERE rather than
+// repeated at each caller: role words reach keyway from a realm that may
+// carry roles belonging to other systems entirely, and from a deployment's
+// dev_roles list. Refusing the whole set over one unknown word would lock
+// somebody out of a console because their realm also runs a wiki; granting
+// something for a word this build cannot interpret would be worse. So the
+// unknown ones are dropped and handed back, and every caller says out loud
+// which words it dropped — silence is what made this hard to diagnose.
+func ParseRoles(words []string) (roles []Role, unknown []string) {
+	roles = make([]Role, 0, len(words))
+	for _, word := range words {
+		role, known := ParseRole(word)
+		if !known {
+			unknown = append(unknown, word)
+			continue
+		}
+		roles = append(roles, role)
+	}
+	return roles, unknown
+}
+
 // NewActor builds an actor from a handle, the groups they are in and the
 // roles they hold. Duplicates collapse: membership is a set, not a list.
-func NewActor(handle string, groups []string, roles []Role) Actor {
+func NewActor(handle Handle, groups []GroupName, roles []Role) Actor {
 	actor := Actor{
 		handle: handle,
-		groups: make(map[string]struct{}, len(groups)),
+		groups: make(map[GroupName]struct{}, len(groups)),
 		roles:  make(map[Role]struct{}, len(roles)),
 	}
 	for _, group := range groups {
@@ -91,7 +121,16 @@ func (a Actor) ViaToken(tokenID string) Actor {
 }
 
 // Handle is the name every service keys and logs on.
-func (a Actor) Handle() string { return a.handle }
+//
+// A plain string, not the Handle type, because this method is the shape the
+// access and audit domains declare in their own Caller/Actor interfaces —
+// and identity/entity imports access/entity, so access/entity cannot name a
+// type from here without a cycle. Name is the typed accessor for callers
+// inside this domain.
+func (a Actor) Handle() string { return string(a.handle) }
+
+// Name is who this actor is, typed, for the identity domain's own use.
+func (a Actor) Name() Handle { return a.handle }
 
 // TokenID is the public id of the API token this request arrived on, and
 // false for a browser session.
@@ -122,9 +161,9 @@ func (a Actor) MayCreate() bool {
 // are ordinary members of this set.
 func (a Actor) IsAddressedBy(subject access.Subject) bool {
 	if subject.IsUser() {
-		return subject.ID() == a.handle
+		return subject.ID() == a.handle.String()
 	}
-	_, ok := a.groups[subject.ID()]
+	_, ok := a.groups[GroupName(subject.ID())]
 	return ok
 }
 
@@ -132,10 +171,20 @@ func (a Actor) IsAddressedBy(subject access.Subject) bool {
 func (a Actor) GroupNames() []string {
 	names := make([]string, 0, len(a.groups))
 	for group := range a.groups {
-		names = append(names, group)
+		names = append(names, group.String())
 	}
 	sort.Strings(names)
 	return names
+}
+
+// Groups is the same set, typed, for the identity domain's own use.
+func (a Actor) Groups() []GroupName {
+	names := a.GroupNames()
+	groups := make([]GroupName, len(names))
+	for i, name := range names {
+		groups[i] = GroupName(name)
+	}
+	return groups
 }
 
 // RoleNames is the roles this caller holds, by name.
@@ -155,7 +204,7 @@ func (a Actor) RoleNames() []string {
 // Subjects is every string a delegation could name this caller by.
 func (a Actor) Subjects() []access.Subject {
 	subjects := make([]access.Subject, 0, 1+len(a.groups))
-	subjects = append(subjects, access.User(a.handle))
+	subjects = append(subjects, access.User(a.handle.String()))
 	for _, group := range a.GroupNames() {
 		subjects = append(subjects, access.Group(group))
 	}
@@ -180,8 +229,8 @@ func (a Actor) Ceiling() (access.Level, bool) {
 // which carries no claim of its own — can act as its holder in full
 // (ADR-0004).
 type RememberedUser struct {
-	Handle    string
-	Groups    []string
+	Handle    Handle
+	Groups    []GroupName
 	Email     string
 	Name      string
 	LastLogin time.Time

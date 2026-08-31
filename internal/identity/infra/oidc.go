@@ -14,6 +14,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -22,9 +23,14 @@ import (
 
 	"github.com/kotsmile/keyway/config"
 	"github.com/kotsmile/keyway/internal/identity/entity"
+	identityservice "github.com/kotsmile/keyway/internal/identity/service"
 )
 
 // Oidc is a configured issuer, discovered once at boot.
+//
+// It implements identityservice.Issuer, which is what the transport holds:
+// Pending and SignedIn are the identity domain's vocabulary, and everything
+// about discovery documents, PKCE verifiers and claim paths stops here.
 type Oidc struct {
 	oauth       oauth2.Config
 	verifier    *oidc.IDTokenVerifier
@@ -34,22 +40,7 @@ type Oidc struct {
 	rolePrefix  string
 }
 
-// SignedIn is who signed in, as the claim describes them.
-type SignedIn struct {
-	Handle string
-	Email  string
-	Name   string
-	Groups []string
-	Roles  []entity.Role
-}
-
-// Pending is what a redirect to the issuer needs remembering across it.
-type Pending struct {
-	AuthorizeURL string
-	CSRF         string
-	Nonce        string
-	PKCEVerifier string
-}
+var _ identityservice.Issuer = (*Oidc)(nil)
 
 // Discover discovers the issuer.
 //
@@ -86,11 +77,11 @@ func Discover(ctx context.Context, cfg config.Oidc) (*Oidc, error) {
 }
 
 // Start is where to send somebody, and what to remember while they are gone.
-func (o *Oidc) Start() Pending {
+func (o *Oidc) Start() identityservice.Pending {
 	verifier := oauth2.GenerateVerifier()
 	csrf := randomToken()
 	nonce := randomToken()
-	return Pending{
+	return identityservice.Pending{
 		AuthorizeURL: o.oauth.AuthCodeURL(csrf,
 			oauth2.S256ChallengeOption(verifier), oidc.Nonce(nonce)),
 		CSRF:         csrf,
@@ -103,7 +94,9 @@ func (o *Oidc) Start() Pending {
 //
 // It errors when the exchange fails, the id token is absent or its claims do
 // not verify.
-func (o *Oidc) Finish(ctx context.Context, code, nonce, pkceVerifier string) (*SignedIn, error) {
+func (o *Oidc) Finish(
+	ctx context.Context, code, nonce, pkceVerifier string,
+) (*identityservice.SignedIn, error) {
 	ctx = oidc.ClientContext(ctx, o.http)
 	tokens, err := o.oauth.Exchange(ctx, code, oauth2.VerifierOption(pkceVerifier))
 	if err != nil {
@@ -130,29 +123,48 @@ func (o *Oidc) Finish(ctx context.Context, code, nonce, pkceVerifier string) (*S
 	// `preferred_username` is the handle everything keys and logs on; the
 	// subject is stable but unreadable, and an audit log full of uuids
 	// answers nobody's question.
-	handle, _ := claims["preferred_username"].(string)
-	if handle == "" {
-		handle = idToken.Subject
+	username, _ := claims["preferred_username"].(string)
+	handle, handleErr := entity.NewHandle(username)
+	if handleErr != nil {
+		// A claim with no usable username at all. The subject is always
+		// present and always non-empty, so this is the fallback that cannot
+		// itself fail.
+		handle, handleErr = entity.NewHandle(idToken.Subject)
+		if handleErr != nil {
+			return nil, fmt.Errorf("reading the id token claims: the issuer named nobody")
+		}
 	}
 	email, _ := claims["email"].(string)
 	name, _ := claims["name"].(string)
 
-	var roles []entity.Role
+	// Only prefixed words are candidates: a realm namespaces its keyway roles
+	// (`keyway:admin`) precisely so its other systems' roles are not read as
+	// keyway's. What survives the prefix is then a role word like any other,
+	// and unknown ones are dropped and named — the same accept-and-warn the
+	// dev_roles list gets, from the same function.
+	var prefixed []string
 	for _, word := range stringsAt(claims, o.rolesClaim) {
-		stripped, prefixed := strings.CutPrefix(word, o.rolePrefix)
-		if !prefixed {
-			continue
-		}
-		if role, known := entity.ParseRole(stripped); known {
-			roles = append(roles, role)
+		if stripped, ok := strings.CutPrefix(word, o.rolePrefix); ok {
+			prefixed = append(prefixed, stripped)
 		}
 	}
+	roles, unknown := entity.ParseRoles(prefixed)
+	if len(unknown) > 0 {
+		slog.Warn("the roles claim carries keyway-prefixed roles this build does not have",
+			"user", handle.String(), "unknown", unknown, "known", entity.RoleWords())
+	}
 
-	return &SignedIn{
+	groups, dropped := entity.GroupNamesOf(stringsAt(claims, o.groupsClaim))
+	if len(dropped) > 0 {
+		slog.Warn("the groups claim carries entries that name no group; they are ignored",
+			"user", handle.String(), "dropped", len(dropped))
+	}
+
+	return &identityservice.SignedIn{
 		Handle: handle,
 		Email:  email,
 		Name:   name,
-		Groups: stringsAt(claims, o.groupsClaim),
+		Groups: groups,
 		Roles:  roles,
 	}, nil
 }

@@ -11,27 +11,22 @@ import (
 //
 // Retired keys stay configured for exactly as long as a version sealed under
 // them still exists. This lives in the domain rather than in cmd so the
-// mount wiring (main.rs's mount_stores, ported with `serve`) stays thin.
+// mount wiring stays thin — and the settings arrive already read into
+// config.KeywaySettings, so what is left here is the one decision that is
+// actually the domain's: which id is active, and which material goes with it.
 func KeyringFor(declared config.StoreConfig) (*entity.Keyring, error) {
-	setting := func(name string) (string, bool) {
-		value, ok := declared.Settings[name].(string)
-		return value, ok
-	}
+	settings := declared.KeywaySettings()
 
-	active := "v1"
-	if id, ok := setting("key_id"); ok {
-		active = id
+	keys := make(map[string]string, len(settings.PreviousKeys)+1)
+	if settings.Key != "" {
+		keys[settings.KeyID] = settings.Key
 	}
-	keys := map[string]string{}
-	if key, ok := setting("key"); ok {
-		keys[active] = key
+	// Applied after the active key, which is the order that was always in
+	// force: a `previous_keys` entry sharing the active id wins. It is a
+	// misconfiguration either way, and changing which side wins would change
+	// which key a deployment seals under on the next restart.
+	for id, material := range settings.PreviousKeys {
+		keys[id] = material
 	}
-	if previous, ok := declared.Settings["previous_keys"].(map[string]any); ok {
-		for id, material := range previous {
-			if key, ok := material.(string); ok {
-				keys[id] = key
-			}
-		}
-	}
-	return entity.NewKeyring(active, keys)
+	return entity.NewKeyring(settings.KeyID, keys)
 }

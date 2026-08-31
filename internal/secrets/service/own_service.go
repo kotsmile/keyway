@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"strconv"
 
 	"github.com/kotsmile/keyway/internal/secrets/entity"
 )
@@ -13,25 +12,25 @@ import (
 // current, what a destroyed one yields and how the next number is chosen live
 // in the entity package, and this interface only moves them.
 type OwnStoreRepo interface {
-	ListSecrets(ctx context.Context, store string) ([]entity.Secret, error)
+	ListSecrets(ctx context.Context, store entity.StoreID) ([]entity.Secret, error)
 	// GetSecret returns nil for a secret that does not exist.
-	GetSecret(ctx context.Context, store, name string) (*entity.Secret, error)
+	GetSecret(ctx context.Context, store entity.StoreID, name entity.SecretName) (*entity.Secret, error)
 	InsertSecret(ctx context.Context, secret entity.Secret) error
-	UpdateLabels(ctx context.Context, store, name string, labels entity.Metadata) (bool, error)
-	DeleteSecret(ctx context.Context, store, name string) (bool, error)
+	UpdateLabels(ctx context.Context, store entity.StoreID, name entity.SecretName, labels entity.Metadata) (bool, error)
+	DeleteSecret(ctx context.Context, store entity.StoreID, name entity.SecretName) (bool, error)
 
-	ListVersions(ctx context.Context, store, name string) ([]entity.Version, error)
+	ListVersions(ctx context.Context, store entity.StoreID, name entity.SecretName) ([]entity.Version, error)
 	// GetVersion returns nil for a version that does not exist.
-	GetVersion(ctx context.Context, store, name string, number int64) (*entity.OwnVersion, error)
+	GetVersion(ctx context.Context, store entity.StoreID, name entity.SecretName, number int64) (*entity.OwnVersion, error)
 	// AppendVersion allocates the next number and writes the version the
 	// callback seals under it, in one transaction.
 	//
 	// The number and the seal have to agree, because the number is bound into
 	// the tag — so allocating it outside the write would let two concurrent
 	// writers seal different payloads under one number.
-	AppendVersion(ctx context.Context, store, name string, seal SealWith) (entity.OwnVersion, error)
+	AppendVersion(ctx context.Context, store entity.StoreID, name entity.SecretName, seal SealWith) (entity.OwnVersion, error)
 
-	KeyIDsInUse(ctx context.Context, store string) ([]string, error)
+	KeyIDsInUse(ctx context.Context, store entity.StoreID) ([]string, error)
 }
 
 // SealWith seals a payload once the version number is known.
@@ -45,13 +44,13 @@ type SealWith func(number int64) (entity.OwnVersion, error)
 // deployments, and a service needing a human present after every node
 // eviction blocks deploys at 3am.
 type OwnStoreService struct {
-	storeID string
+	storeID entity.StoreID
 	repo    OwnStoreRepo
 	keyring *entity.Keyring
 }
 
 // NewOwnStoreService mounts one own Store over its rows.
-func NewOwnStoreService(storeID string, repo OwnStoreRepo, keyring *entity.Keyring) *OwnStoreService {
+func NewOwnStoreService(storeID entity.StoreID, repo OwnStoreRepo, keyring *entity.Keyring) *OwnStoreService {
 	return &OwnStoreService{storeID: storeID, repo: repo, keyring: keyring}
 }
 
@@ -64,7 +63,7 @@ func (s *OwnStoreService) KeysInUse(ctx context.Context) ([]string, error) {
 	return s.repo.KeyIDsInUse(ctx, s.storeID)
 }
 
-func (s *OwnStoreService) requireExists(ctx context.Context, name string) (entity.Secret, error) {
+func (s *OwnStoreService) requireExists(ctx context.Context, name entity.SecretName) (entity.Secret, error) {
 	secret, err := s.repo.GetSecret(ctx, s.storeID, name)
 	if err != nil {
 		return entity.Secret{}, entity.Backend("looking up a secret", err)
@@ -85,12 +84,12 @@ func (s *OwnStoreService) List(ctx context.Context) ([]entity.Secret, error) {
 }
 
 // Get implements entity.SecretManager.
-func (s *OwnStoreService) Get(ctx context.Context, name string) (entity.Secret, error) {
+func (s *OwnStoreService) Get(ctx context.Context, name entity.SecretName) (entity.Secret, error) {
 	return s.requireExists(ctx, name)
 }
 
 // Versions implements entity.SecretManager.
-func (s *OwnStoreService) Versions(ctx context.Context, name string) ([]entity.Version, error) {
+func (s *OwnStoreService) Versions(ctx context.Context, name entity.SecretName) ([]entity.Version, error) {
 	if _, err := s.requireExists(ctx, name); err != nil {
 		return nil, err
 	}
@@ -102,13 +101,13 @@ func (s *OwnStoreService) Versions(ctx context.Context, name string) ([]entity.V
 }
 
 // Access implements entity.SecretManager.
-func (s *OwnStoreService) Access(ctx context.Context, name, version string) ([]byte, error) {
+func (s *OwnStoreService) Access(ctx context.Context, name entity.SecretName, version entity.VersionID) ([]byte, error) {
 	if _, err := s.requireExists(ctx, name); err != nil {
 		return nil, err
 	}
 
 	var number int64
-	if version != "" {
+	if !version.IsLatest() {
 		parsed, err := entity.ParseNumber(version)
 		if err != nil {
 			return nil, err
@@ -134,13 +133,13 @@ func (s *OwnStoreService) Access(ctx context.Context, name, version string) ([]b
 		return nil, entity.Backend("reading a version", err)
 	}
 	if stored == nil {
-		return nil, &entity.NoSuchVersionError{Version: strconv.FormatInt(number, 10)}
+		return nil, &entity.NoSuchVersionError{Version: entity.NumberVersion(number)}
 	}
 	return stored.Open(s.keyring)
 }
 
 // SetLabels implements entity.SecretManager.
-func (s *OwnStoreService) SetLabels(ctx context.Context, name string, labels entity.Metadata) error {
+func (s *OwnStoreService) SetLabels(ctx context.Context, name entity.SecretName, labels entity.Metadata) error {
 	changed, err := s.repo.UpdateLabels(ctx, s.storeID, name, labels)
 	if err != nil {
 		return entity.Backend("setting labels", err)
@@ -152,10 +151,12 @@ func (s *OwnStoreService) SetLabels(ctx context.Context, name string, labels ent
 }
 
 // Create implements entity.SecretManager.
-func (s *OwnStoreService) Create(ctx context.Context, name string, labels entity.Metadata) error {
-	if name == "" {
-		return &entity.InvalidNameError{Name: name, Reason: "a name is required"}
-	}
+//
+// The "a name is required" check that used to open this method is now the
+// SecretName constructor's, at the edge that reads the request: a name is
+// validated once, where it arrives, rather than by each backend that
+// receives it.
+func (s *OwnStoreService) Create(ctx context.Context, name entity.SecretName, labels entity.Metadata) error {
 	err := s.repo.InsertSecret(ctx, entity.Secret{
 		Store:  s.storeID,
 		Name:   name,
@@ -168,7 +169,7 @@ func (s *OwnStoreService) Create(ctx context.Context, name string, labels entity
 }
 
 // AddVersion implements entity.SecretManager.
-func (s *OwnStoreService) AddVersion(ctx context.Context, name string, payload []byte) (entity.Version, error) {
+func (s *OwnStoreService) AddVersion(ctx context.Context, name entity.SecretName, payload []byte) (entity.Version, error) {
 	if _, err := s.requireExists(ctx, name); err != nil {
 		return entity.Version{}, err
 	}
@@ -184,7 +185,7 @@ func (s *OwnStoreService) AddVersion(ctx context.Context, name string, payload [
 }
 
 // Delete implements entity.SecretManager.
-func (s *OwnStoreService) Delete(ctx context.Context, name string) error {
+func (s *OwnStoreService) Delete(ctx context.Context, name entity.SecretName) error {
 	removed, err := s.repo.DeleteSecret(ctx, s.storeID, name)
 	if err != nil {
 		return entity.Backend("deleting a secret", err)

@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func version(id string, state VersionState) Version {
+func version(id VersionID, state VersionState) Version {
 	return Version{ID: id, State: state}
 }
 
@@ -84,7 +84,7 @@ func TestTheLatestIsTheNewestReadableOne(t *testing.T) {
 	}
 	latest, ok := Latest(versions)
 	require.True(t, ok)
-	assert.Equal(t, "2", latest.ID)
+	assert.Equal(t, VersionID("2"), latest.ID)
 }
 
 func TestASecretWithNoReadableVersionHasNoLatest(t *testing.T) {

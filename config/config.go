@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	secretsentity "github.com/kotsmile/keyway/internal/secrets/entity"
 )
 
 type Config struct {
@@ -83,7 +85,7 @@ type Oidc struct {
 	// Unset, keyway calls it on no request at all and a token's groups are
 	// what was remembered at its holder's last sign-in. Set, membership is
 	// live and disabling an account cuts every token it issued (ADR-0004).
-	Directory string `yaml:"directory"`
+	Directory DirectoryKind `yaml:"directory"`
 	// DevUser is who a local run acts as. With no issuer, authentication is
 	// off and the service acts as this user — every authorisation decision is
 	// still made, so a local run behaves like production minus the redirect.
@@ -91,6 +93,53 @@ type Oidc struct {
 	DevRoles  []string `yaml:"dev_roles"`
 	DevGroups []string `yaml:"dev_groups"`
 }
+
+// DirectoryKind names which identity provider's admin API to talk to — the
+// `oidc.directory` word.
+//
+// A closed list for the same reason a Store's `type:` is one: it selects an
+// implementation compiled into this binary, so an unknown word is a
+// deployment expecting live membership checks and silently not getting them.
+// Empty is the ordinary case and means none is configured.
+type DirectoryKind string
+
+const (
+	// DirectoryNone is no live connection at all. A token's groups are what
+	// was remembered at its holder's last sign-in, and deleting the token is
+	// the only revocation.
+	DirectoryNone DirectoryKind = ""
+	// DirectoryKeycloak is Keycloak's admin REST API. Keycloak-specific
+	// because that API is Keycloak's, not OIDC's.
+	DirectoryKeycloak DirectoryKind = "keycloak"
+)
+
+// UnknownDirectoryError is a `directory:` naming something this build cannot
+// talk to.
+type UnknownDirectoryError struct {
+	Kind string
+}
+
+func (e *UnknownDirectoryError) Error() string {
+	return fmt.Sprintf("oidc.directory names an unknown kind %q; this build has: keycloak", e.Kind)
+}
+
+// UnmarshalYAML refuses a directory this build does not have, at parse.
+func (d *DirectoryKind) UnmarshalYAML(node *yaml.Node) error {
+	var word string
+	if err := node.Decode(&word); err != nil {
+		return err
+	}
+	switch DirectoryKind(word) {
+	case DirectoryNone, DirectoryKeycloak:
+		*d = DirectoryKind(word)
+		return nil
+	default:
+		return &UnknownDirectoryError{Kind: word}
+	}
+}
+
+// IsConfigured is whether this deployment asked for a live directory at all.
+func (d DirectoryKind) IsConfigured() bool { return d != DirectoryNone }
 
 type Branding struct {
 	Name    string `yaml:"name"`
@@ -156,11 +205,13 @@ func (e *UnresolvedError) Error() string {
 
 // DuplicateStoreError is two stores on one id.
 type DuplicateStoreError struct {
-	ID string
+	ID secretsentity.StoreID
 }
 
 func (e *DuplicateStoreError) Error() string {
-	return fmt.Sprintf("two stores share the id %q; every grant written against it would be ambiguous", e.ID)
+	return fmt.Sprintf(
+		"two stores share the id %q; every grant written against it would be ambiguous",
+		e.ID.String())
 }
 
 // Load reads, resolves and validates the file at path.
@@ -231,7 +282,7 @@ func requireBlocks(document *yaml.Node) error {
 }
 
 func (c Config) validate() error {
-	seen := map[string]bool{}
+	seen := map[secretsentity.StoreID]bool{}
 	for _, store := range c.Stores {
 		if seen[store.ID] {
 			return &DuplicateStoreError{ID: store.ID}

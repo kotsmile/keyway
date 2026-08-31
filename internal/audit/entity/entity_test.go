@@ -32,3 +32,24 @@ func TestARecordDefaultsToTheFieldsMostEntriesDoNotSet(t *testing.T) {
 	assert.Empty(t, record.Keys)
 	assert.Empty(t, record.Subject)
 }
+
+func TestOnlyTheSevenActionsTheColumnAllowsAreKnown(t *testing.T) {
+	// The `action` column carries a CHECK constraint listing exactly these
+	// words. IsKnown is the mirror of it, so an entry nothing could have
+	// meant is refused where the word was chosen rather than by PostgreSQL,
+	// which would report a constraint name and drop the entry.
+	for _, action := range []entity.Action{
+		entity.Create, entity.Update, entity.Reveal, entity.Delete,
+		entity.Delegate, entity.Revoke, entity.Transfer,
+	} {
+		assert.True(t, action.IsKnown(), "%q is in the CHECK constraint", action)
+	}
+	for _, action := range []entity.Action{"", "read", "REVEAL", "rotate"} {
+		assert.False(t, action.IsKnown(), "%q is not", action)
+	}
+
+	// And the refusal says which word and what this build has.
+	err := &entity.UnknownActionError{Action: "rotate"}
+	assert.Contains(t, err.Error(), `"rotate"`)
+	assert.Contains(t, err.Error(), "create, update, reveal, delete, delegate, revoke, transfer")
+}

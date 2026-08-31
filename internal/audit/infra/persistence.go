@@ -15,6 +15,7 @@ import (
 
 	"github.com/kotsmile/keyway/internal/audit/entity"
 	auditservice "github.com/kotsmile/keyway/internal/audit/service"
+	secrets "github.com/kotsmile/keyway/internal/secrets/entity"
 )
 
 // PostgresAuditRepo stores the audit log in keyway's own database.
@@ -56,10 +57,10 @@ func (dto entryDTO) entry() entity.Entry {
 		// its enum had to guess `update` here; the Go Action is a string and
 		// need not guess.)
 		Action:   entity.Action(dto.Action),
-		Store:    dto.Store,
-		Secret:   dto.Secret,
+		Store:    secrets.StoreID(dto.Store),
+		Secret:   secrets.SecretName(dto.Secret),
 		SecretID: dto.SecretID,
-		Version:  dto.Version,
+		Version:  secrets.VersionID(dto.Version),
 		Keys:     dto.Keys,
 		Subject:  dto.Subject,
 		Note:     dto.Note,
@@ -87,8 +88,8 @@ func (r *PostgresAuditRepo) Append(ctx context.Context, actor, viaToken string, 
 		`INSERT INTO audit
 		    (actor, via_token, action, store, secret, secret_id, version, keys, subject, note)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-		actor, via, string(record.Action), record.Store, record.Secret,
-		record.SecretID, record.Version, keys, record.Subject, record.Note)
+		actor, via, string(record.Action), record.Store.String(), record.Secret.String(),
+		record.SecretID, record.Version.String(), keys, record.Subject, record.Note)
 	if err != nil {
 		return fmt.Errorf("appending an audit entry: %w", err)
 	}
@@ -96,13 +97,15 @@ func (r *PostgresAuditRepo) Append(ctx context.Context, actor, viaToken string, 
 }
 
 // ForSecret reads one secret's history, newest first.
-func (r *PostgresAuditRepo) ForSecret(ctx context.Context, store, secret string, limit int64) ([]entity.Entry, error) {
+func (r *PostgresAuditRepo) ForSecret(
+	ctx context.Context, store secrets.StoreID, secret secrets.SecretName, limit int64,
+) ([]entity.Entry, error) {
 	var rows []entryDTO
 	err := r.db.SelectContext(ctx, &rows,
 		`SELECT id, at, actor, via_token, action, store, secret, secret_id, version, keys, subject, note
 		 FROM audit WHERE store = $1 AND secret = $2
 		 ORDER BY at DESC, id DESC LIMIT $3`,
-		store, secret, limit)
+		store.String(), secret.String(), limit)
 	if err != nil {
 		return nil, fmt.Errorf("reading a secret's history: %w", err)
 	}

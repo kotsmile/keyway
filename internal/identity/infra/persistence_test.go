@@ -79,7 +79,7 @@ func TestRememberedGroupsSurviveARoundTrip(t *testing.T) {
 	at := time.Date(2026, 8, 29, 9, 30, 0, 123456000, time.UTC)
 	require.NoError(t, repo.Remember(ctx, &entity.RememberedUser{
 		Handle:    "alice",
-		Groups:    []string{"SRE", "platform"},
+		Groups:    []entity.GroupName{"SRE", "platform"},
 		Email:     "alice@example.com",
 		Name:      "Alice",
 		LastLogin: at,
@@ -88,8 +88,8 @@ func TestRememberedGroupsSurviveARoundTrip(t *testing.T) {
 	user, err := repo.Recall(ctx, "alice")
 	require.NoError(t, err)
 	require.NotNil(t, user)
-	assert.Equal(t, "alice", user.Handle)
-	assert.Equal(t, []string{"SRE", "platform"}, user.Groups)
+	assert.Equal(t, entity.Handle("alice"), user.Handle)
+	assert.Equal(t, []entity.GroupName{"SRE", "platform"}, user.Groups)
 	assert.Equal(t, "alice@example.com", user.Email)
 	assert.Equal(t, "Alice", user.Name)
 	// timestamptz keeps microseconds and may come back in another zone;
@@ -106,19 +106,19 @@ func TestASignInReplacesTheGroupsInTheRow(t *testing.T) {
 
 	first := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
 	require.NoError(t, repo.Remember(ctx, &entity.RememberedUser{
-		Handle: "alice", Groups: []string{"SRE", "platform"},
+		Handle: "alice", Groups: []entity.GroupName{"SRE", "platform"},
 		Email: "alice@example.com", Name: "Alice", LastLogin: first,
 	}))
 	second := first.Add(24 * time.Hour)
 	require.NoError(t, repo.Remember(ctx, &entity.RememberedUser{
-		Handle: "alice", Groups: []string{"platform"},
+		Handle: "alice", Groups: []entity.GroupName{"platform"},
 		Email: "alice@acme.example.com", Name: "Alice A.", LastLogin: second,
 	}))
 
 	user, err := repo.Recall(ctx, "alice")
 	require.NoError(t, err)
 	require.NotNil(t, user)
-	assert.Equal(t, []string{"platform"}, user.Groups)
+	assert.Equal(t, []entity.GroupName{"platform"}, user.Groups)
 	assert.Equal(t, "alice@acme.example.com", user.Email)
 	assert.Equal(t, "Alice A.", user.Name)
 	assert.True(t, user.LastLogin.Equal(second))

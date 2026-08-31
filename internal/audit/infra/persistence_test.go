@@ -16,13 +16,14 @@ import (
 	"github.com/kotsmile/keyway/internal/audit/infra"
 	auditservice "github.com/kotsmile/keyway/internal/audit/service"
 	"github.com/kotsmile/keyway/internal/postgres/pgtest"
+	secretsentity "github.com/kotsmile/keyway/internal/secrets/entity"
 )
 
 // aStore keys this test's rows away from every other run: the audit table is
 // append-only and shared, so rows are never cleaned up, only ignored.
-func aStore(t *testing.T) string {
+func aStore(t *testing.T) secretsentity.StoreID {
 	t.Helper()
-	return "test-" + uuid.NewString()
+	return secretsentity.StoreID("test-" + uuid.NewString())
 }
 
 func TestAnEntryRoundTripsThroughItsRow(t *testing.T) {
@@ -48,10 +49,10 @@ func TestAnEntryRoundTripsThroughItsRow(t *testing.T) {
 	assert.Equal(t, "7f3a9c2e", entry.ViaToken)
 	assert.Equal(t, entity.Reveal, entry.Action)
 	assert.Equal(t, store, entry.Store)
-	assert.Equal(t, "db-creds", entry.Secret)
+	assert.Equal(t, secretsentity.SecretName("db-creds"), entry.Secret)
 	require.NotNil(t, entry.SecretID)
 	assert.Equal(t, secretID, *entry.SecretID)
-	assert.Equal(t, "3", entry.Version)
+	assert.Equal(t, secretsentity.VersionID("3"), entry.Version)
 	assert.Equal(t, []string{"db_password"}, entry.Keys)
 	assert.Equal(t, "group:SRE", entry.Subject)
 	assert.Equal(t, "incident 42", entry.Note)
@@ -130,7 +131,7 @@ func TestTheFeedPagesNewestFirstThroughBefore(t *testing.T) {
 	ctx := context.Background()
 	store := aStore(t)
 
-	for _, secret := range []string{"one", "two", "three"} {
+	for _, secret := range []secretsentity.SecretName{"one", "two", "three"} {
 		require.NoError(t, repo.Append(ctx, "alice", "",
 			entity.NewRecord(entity.Update, uuid.New(), store, secret)))
 	}
@@ -154,9 +155,9 @@ func TestTheFeedPagesNewestFirstThroughBefore(t *testing.T) {
 	}
 
 	require.Len(t, mine, 3)
-	assert.Equal(t, "three", mine[0].Secret, "newest first")
-	assert.Equal(t, "two", mine[1].Secret)
-	assert.Equal(t, "one", mine[2].Secret)
+	assert.Equal(t, secretsentity.SecretName("three"), mine[0].Secret, "newest first")
+	assert.Equal(t, secretsentity.SecretName("two"), mine[1].Secret)
+	assert.Equal(t, secretsentity.SecretName("one"), mine[2].Secret)
 	assert.Greater(t, mine[0].ID, mine[1].ID)
 }
 

@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func labelled(store, name string, labels map[string]string) Secret {
+func labelled(store StoreID, name SecretName, labels map[string]string) Secret {
 	return Secret{Store: store, Name: name, Labels: labels}
 }
 

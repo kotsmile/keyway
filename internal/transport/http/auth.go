@@ -31,18 +31,14 @@ type Auth struct {
 	Tokens   *tokensservice.Service
 	Identity *identityservice.Service
 	// Dev is who a local run acts as. Nil once an issuer is configured.
-	Dev *DevActor
+	//
+	// Already parsed by the identity domain: which words in dev_roles name a
+	// role is that domain's decision, and this layer only needs the answer.
+	Dev *identityservice.DevActor
 	// Codec reads the session cookie.
 	Codec *Codec
 	// Now is injectable so a test can hold the clock still.
 	Now func() time.Time
-}
-
-// DevActor is the identity a dev-mode run assumes.
-type DevActor struct {
-	Handle string
-	Roles  []identityentity.Role
-	Groups []string
 }
 
 // callerKey carries the resolved Actor through the request context.
@@ -100,7 +96,7 @@ func (a *Auth) Resolve(r *http.Request) (identityentity.Actor, error) {
 	// No credential. In dev mode that is the configured user; otherwise it is
 	// nobody.
 	if a.Dev != nil {
-		return identityentity.NewActor(a.Dev.Handle, a.Dev.Groups, a.Dev.Roles), nil
+		return a.Dev.Actor(), nil
 	}
 	return identityentity.Actor{}, Unauthorized()
 }
@@ -123,11 +119,21 @@ func (a *Auth) resolveToken(ctx context.Context, presented string) (identityenti
 		return identityentity.Actor{}, Internal(err)
 	}
 
+	// A token row whose subject is not a handle anything could act as. Only
+	// reachable for a row written before handles were read through a
+	// constructor; reported as a refusal rather than a 500, because the
+	// credential is genuinely unusable.
+	subject, err := identityentity.NewHandle(token.Subject)
+	if err != nil {
+		slog.Info("token names no usable subject", "token_id", token.ID.String())
+		return identityentity.Actor{}, Unauthorized()
+	}
+
 	// Roles are not carried by the token: it acts as its holder. Without a
 	// Directory a token's roles are empty, which is deliberate — a role opens
 	// no secret anyway (ADR-0002), and the grants addressed to the holder are
 	// what matter.
-	actor, err := a.Identity.ActorForToken(ctx, token.Subject, nil, token.ID)
+	actor, err := a.Identity.ActorForToken(ctx, subject, nil, token.ID.String())
 	if err != nil {
 		return identityentity.Actor{}, Internal(err)
 	}

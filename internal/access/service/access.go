@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/kotsmile/keyway/internal/access/entity"
+	secrets "github.com/kotsmile/keyway/internal/secrets/entity"
 )
 
 // Repo is everything this domain needs from storage.
@@ -22,8 +23,8 @@ import (
 // to write a query is free to get it wrong — so the repository answers "what
 // grants exist on this secret" and entity.Resolve answers the rest.
 type Repo interface {
-	GrantsOn(ctx context.Context, store, secret string) ([]entity.Delegation, error)
-	OwnerOf(ctx context.Context, store, secret string) (*entity.Ownership, error)
+	GrantsOn(ctx context.Context, store secrets.StoreID, secret secrets.SecretName) ([]entity.Delegation, error)
+	OwnerOf(ctx context.Context, store secrets.StoreID, secret secrets.SecretName) (*entity.Ownership, error)
 	GrantsForSubjects(ctx context.Context, subjects []entity.Subject) ([]entity.Delegation, error)
 	SaveGrant(ctx context.Context, grant entity.Delegation) error
 	RemoveGrant(ctx context.Context, id uuid.UUID) (bool, error)
@@ -41,7 +42,10 @@ func NewService(repo Repo) *Service {
 }
 
 // AccessFor is how far `actor` gets on one secret.
-func (s *Service) AccessFor(ctx context.Context, actor entity.Caller, store, secret string, now time.Time) (entity.Access, error) {
+func (s *Service) AccessFor(
+	ctx context.Context, actor entity.Caller,
+	store secrets.StoreID, secret secrets.SecretName, now time.Time,
+) (entity.Access, error) {
 	owner, err := s.repo.OwnerOf(ctx, store, secret)
 	if err != nil {
 		return entity.Access{}, err
@@ -55,12 +59,16 @@ func (s *Service) AccessFor(ctx context.Context, actor entity.Caller, store, sec
 
 // GrantsOn is every grant on one secret — the list that answers "who can see
 // this".
-func (s *Service) GrantsOn(ctx context.Context, store, secret string) ([]entity.Delegation, error) {
+func (s *Service) GrantsOn(
+	ctx context.Context, store secrets.StoreID, secret secrets.SecretName,
+) ([]entity.Delegation, error) {
 	return s.repo.GrantsOn(ctx, store, secret)
 }
 
 // OwnerOf is who owns a secret, if anybody does.
-func (s *Service) OwnerOf(ctx context.Context, store, secret string) (*entity.Ownership, error) {
+func (s *Service) OwnerOf(
+	ctx context.Context, store secrets.StoreID, secret secrets.SecretName,
+) (*entity.Ownership, error) {
 	return s.repo.OwnerOf(ctx, store, secret)
 }
 
@@ -87,7 +95,11 @@ func (s *Service) SetOwner(ctx context.Context, ownership entity.Ownership) erro
 }
 
 // Allows is whether `actor` may do `wanted` to this secret.
-func (s *Service) Allows(ctx context.Context, actor entity.Caller, store, secret string, wanted entity.Level, now time.Time) (bool, error) {
+func (s *Service) Allows(
+	ctx context.Context, actor entity.Caller,
+	store secrets.StoreID, secret secrets.SecretName,
+	wanted entity.Level, now time.Time,
+) (bool, error) {
 	access, err := s.AccessFor(ctx, actor, store, secret, now)
 	if err != nil {
 		return false, err

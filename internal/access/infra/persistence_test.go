@@ -14,16 +14,17 @@ import (
 	"github.com/kotsmile/keyway/internal/access/entity"
 	"github.com/kotsmile/keyway/internal/access/infra"
 	"github.com/kotsmile/keyway/internal/postgres/pgtest"
+	secretsentity "github.com/kotsmile/keyway/internal/secrets/entity"
 )
 
 // aStore is a store id no other test run or package writes, because the
 // database is shared and truncation is not an option.
-func aStore(t *testing.T) string {
+func aStore(t *testing.T) secretsentity.StoreID {
 	t.Helper()
-	return "test-" + uuid.NewString()
+	return secretsentity.StoreID("test-" + uuid.NewString())
 }
 
-func aGrant(store string, subject entity.Subject, level entity.Level) entity.Delegation {
+func aGrant(store secretsentity.StoreID, subject entity.Subject, level entity.Level) entity.Delegation {
 	return entity.Delegation{
 		ID:        uuid.New(),
 		Store:     store,
@@ -168,7 +169,7 @@ func TestGrantsForSubjectsMatchesKindAndNameTogether(t *testing.T) {
 	assert.Equal(t, toTheTeam.ID, mine[0].ID, "the person's grant must not reach the team")
 
 	// And nobody at all collects nothing.
-	grants, err = repo.GrantsForSubjects(ctx, []entity.Subject{entity.User("nobody-" + store)})
+	grants, err = repo.GrantsForSubjects(ctx, []entity.Subject{entity.User("nobody-" + store.String())})
 	require.NoError(t, err)
 	assert.Empty(t, grants)
 }

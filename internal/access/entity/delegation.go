@@ -4,6 +4,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	secrets "github.com/kotsmile/keyway/internal/secrets/entity"
 )
 
 // Delegation is a grant over one secret, to one subject, at one level.
@@ -11,10 +13,17 @@ import (
 // It is self-describing: what it says is what it opens, and no role caps it
 // (ADR-0002). The grantee still cannot re-delegate it or transfer it — those
 // belong to ownership, which is a different act with a different audit line.
+//
+// The secret is named by (Store, Secret) rather than by uuid because that is
+// the pair a row is keyed by and the pair that survives a name change nobody
+// told keyway about. Both are the secrets domain's own identifier types:
+// this domain keys its rows by them, so it imports what they mean rather than
+// re-declaring them as two more strings that could be passed the wrong way
+// round.
 type Delegation struct {
 	ID      uuid.UUID
-	Store   string
-	Secret  string
+	Store   secrets.StoreID
+	Secret  secrets.SecretName
 	Subject Subject
 	Level   Level
 	// Keys narrows the grant to some entries of a key/value secret; empty is
@@ -68,9 +77,14 @@ func (d Delegation) ScopedKeys() []string {
 // Always a person: a group cannot own a secret, because an owner is who you
 // ASK about one.
 type Ownership struct {
-	Store  string
-	Secret string
-	Owner  string
+	Store  secrets.StoreID
+	Secret secrets.SecretName
+	// Owner is a handle. A plain string rather than the identity domain's
+	// Handle type: identity/entity imports THIS package for Subject and
+	// Level, so naming its types here would be an import cycle. The handle is
+	// validated where it enters the system — at the claim, at the token — and
+	// arrives here already known-good.
+	Owner string
 	// Since is when they became the owner — set on create, reset by a
 	// transfer. So it reads as "has held this since", not "the secret was
 	// created then".

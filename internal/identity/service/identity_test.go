@@ -13,11 +13,11 @@ import (
 
 // fakeRepo remembers in memory what the Postgres repo remembers in a table.
 type fakeRepo struct {
-	users map[string]*entity.RememberedUser
+	users map[entity.Handle]*entity.RememberedUser
 }
 
 func newFakeRepo() *fakeRepo {
-	return &fakeRepo{users: map[string]*entity.RememberedUser{}}
+	return &fakeRepo{users: map[entity.Handle]*entity.RememberedUser{}}
 }
 
 func (r *fakeRepo) Remember(_ context.Context, user *entity.RememberedUser) error {
@@ -26,7 +26,7 @@ func (r *fakeRepo) Remember(_ context.Context, user *entity.RememberedUser) erro
 	return nil
 }
 
-func (r *fakeRepo) Recall(_ context.Context, handle string) (*entity.RememberedUser, error) {
+func (r *fakeRepo) Recall(_ context.Context, handle entity.Handle) (*entity.RememberedUser, error) {
 	return r.users[handle], nil
 }
 
@@ -35,7 +35,7 @@ type fakeDirectory struct {
 	answer *DirectoryAnswer
 }
 
-func (d *fakeDirectory) Resolve(context.Context, string) (*DirectoryAnswer, error) {
+func (d *fakeDirectory) Resolve(context.Context, entity.Handle) (*DirectoryAnswer, error) {
 	return d.answer, nil
 }
 
@@ -47,16 +47,16 @@ func TestASignInReplacesTheGroupsRatherThanMerging(t *testing.T) {
 	ctx := context.Background()
 
 	first := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
-	require.NoError(t, service.SignIn(ctx, "alice", []string{"SRE", "platform"},
+	require.NoError(t, service.SignIn(ctx, "alice", []entity.GroupName{"SRE", "platform"},
 		"alice@example.com", "Alice", first))
 	second := first.Add(24 * time.Hour)
-	require.NoError(t, service.SignIn(ctx, "alice", []string{"platform"},
+	require.NoError(t, service.SignIn(ctx, "alice", []entity.GroupName{"platform"},
 		"alice@example.com", "Alice", second))
 
 	user, err := service.Recall(ctx, "alice")
 	require.NoError(t, err)
 	require.NotNil(t, user)
-	assert.Equal(t, []string{"platform"}, user.Groups)
+	assert.Equal(t, []entity.GroupName{"platform"}, user.Groups)
 	assert.True(t, user.LastLogin.Equal(second))
 }
 
@@ -66,7 +66,7 @@ func TestATokenActsWithTheRememberedGroupsWithoutADirectory(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, nil)
 	ctx := context.Background()
-	require.NoError(t, service.SignIn(ctx, "alice", []string{"SRE"},
+	require.NoError(t, service.SignIn(ctx, "alice", []entity.GroupName{"SRE"},
 		"alice@example.com", "Alice", time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)))
 
 	actor, err := service.ActorForToken(ctx, "alice", []entity.Role{entity.RoleAdmin}, "7f3a9c2e")
@@ -94,11 +94,11 @@ func TestADirectoryReplacesRememberedGroupsWithALiveAnswer(t *testing.T) {
 	repo := newFakeRepo()
 	service := NewService(repo, &fakeDirectory{answer: &DirectoryAnswer{
 		Enabled: true,
-		Groups:  []string{"/platform"},
+		Groups:  []entity.GroupName{"/platform"},
 	}})
 	ctx := context.Background()
 	// What was remembered says SRE; the live answer must win.
-	require.NoError(t, service.SignIn(ctx, "alice", []string{"SRE"},
+	require.NoError(t, service.SignIn(ctx, "alice", []entity.GroupName{"SRE"},
 		"alice@example.com", "Alice", time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)))
 
 	actor, err := service.ActorForToken(ctx, "alice", nil, "id")

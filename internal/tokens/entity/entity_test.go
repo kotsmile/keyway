@@ -4,7 +4,10 @@
 package entity
 
 import (
+	"bytes"
 	"encoding/hex"
+	"fmt"
+	"log/slog"
 	"regexp"
 	"testing"
 	"time"
@@ -13,14 +16,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// minted returns the plaintext EXPOSED, because the assertions below are
+// about the bytes on the wire. Everywhere else in the codebase a Plaintext
+// prints as `kw-<redacted>`, which is the point of the type.
 func minted(t *testing.T) (StoredToken, string) {
 	t.Helper()
-	stored, plaintext, err := Mint("alice", "eso prod", nil)
+	name, err := NewName("eso prod")
+	require.NoError(t, err, "a name")
+	stored, plaintext, err := Mint("alice", name, nil)
 	require.NoError(t, err, "mints")
-	return stored, plaintext
+	return stored, plaintext.Expose()
 }
 
-func mustSplit(t *testing.T, plaintext string) (string, string) {
+func mustSplit(t *testing.T, plaintext string) (ID, string) {
 	t.Helper()
 	id, secret, ok := Split(plaintext)
 	require.True(t, ok, "%s splits", plaintext)
@@ -51,9 +59,9 @@ func TestAGoldenRustMintedTokenStillVerifies(t *testing.T) {
 
 	// And a stored row holding the Rust hash must admit the Rust plaintext.
 	id, secret := mustSplit(t, goldenPlaintext)
-	assert.Equal(t, goldenID, id)
+	assert.Equal(t, ID(goldenID), id)
 	assert.Equal(t, goldenSecret, secret)
-	stored := StoredToken{ID: goldenID, Hash: goldenHash}
+	stored := StoredToken{ID: ID(goldenID), Hash: goldenHash}
 	assert.NoError(t, stored.Admits(secret, time.Now()))
 }
 
@@ -103,15 +111,58 @@ func TestATokenWithNoExpiryNeverExpires(t *testing.T) {
 }
 
 func TestANameIsRequired(t *testing.T) {
-	_, _, err := Mint("alice", "   ", nil)
+	// The rule moved from Mint onto the Name type — it is read at the edge
+	// now, so a request without a usable name is refused before any entropy
+	// or any row is generated. What it refuses is unchanged.
+	_, err := NewName("   ")
 	assert.ErrorIs(t, err, ErrNameRequired)
 
 	long := make([]byte, MaxName+1)
 	for i := range long {
 		long[i] = 'x'
 	}
-	_, _, err = Mint("alice", string(long), nil)
+	_, err = NewName(string(long))
 	assert.ErrorIs(t, err, ErrNameRequired)
+}
+
+func TestANameIsTrimmedRatherThanRefusedForItsWhitespace(t *testing.T) {
+	name, err := NewName("  eso prod  ")
+	require.NoError(t, err)
+	assert.Equal(t, Name("eso prod"), name)
+}
+
+func TestATokenIDIsHexOrItIsNotAnID(t *testing.T) {
+	// The same grammar Split relies on: an id that is not hex could never
+	// have been minted, so a route holding one is holding a probe.
+	for _, bad := range []string{"", "zzz", "kw-00", "00-11", "abcdefg"} {
+		_, err := ParseID(bad)
+		assert.ErrorIs(t, err, ErrNotAnID, "%q is not an id", bad)
+	}
+	id, err := ParseID("00112233aabbccdd")
+	require.NoError(t, err)
+	assert.Equal(t, ID("00112233aabbccdd"), id)
+}
+
+func TestAPlaintextRedactsItselfEverywhereButTheResponse(t *testing.T) {
+	// A minted token exists once, in one response body. The type is what
+	// keeps it out of every log line, %v and error string on the way there.
+	plaintext := Plaintext("kw-00112233aabbccdd-hunter2")
+	assert.Equal(t, Redacted, plaintext.String())
+	assert.Equal(t, Redacted, fmt.Sprintf("%v", plaintext))
+	assert.Equal(t, Redacted, plaintext.LogValue().String())
+	assert.NotContains(t, fmt.Sprintf("%v", plaintext), "hunter2")
+
+	// And Expose still hands over the real thing, for the one caller that
+	// must write it out.
+	assert.Equal(t, "kw-00112233aabbccdd-hunter2", plaintext.Expose())
+}
+
+func TestPlaintextRedactsThroughSlog(t *testing.T) {
+	var out bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&out, nil))
+	logger.Info("minted", "token", Plaintext("kw-00112233aabbccdd-hunter2"))
+	assert.NotContains(t, out.String(), "hunter2")
+	assert.Contains(t, out.String(), Redacted)
 }
 
 func TestThePlaintextIsURLSafe(t *testing.T) {
@@ -171,7 +222,7 @@ func TestASecretContainingADashSurvivesTheSplit(t *testing.T) {
 	// The secret half is base64url and may contain `-`; everything after the
 	// first separator is the secret.
 	id, secret := mustSplit(t, "kw-aa-bb-cc")
-	assert.Equal(t, "aa", id)
+	assert.Equal(t, ID("aa"), id)
 	assert.Equal(t, "bb-cc", secret)
 }
 

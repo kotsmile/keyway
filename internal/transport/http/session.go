@@ -59,15 +59,16 @@ func (s Session) IsLive(now time.Time) bool {
 //
 // A role name nothing in this build can interpret grants nothing: a realm may
 // hold roles from other systems, and ignoring an unreadable word is the only
-// safe reading of it.
+// safe reading of it. The rule is the identity domain's ParseRoles, shared
+// with the claim and with dev mode — a cookie this build sealed can still
+// carry a word an older build knew, so the same reading applies.
 func (s Session) Actor() identityentity.Actor {
-	roles := make([]identityentity.Role, 0, len(s.Roles))
-	for _, word := range s.Roles {
-		if role, known := identityentity.ParseRole(word); known {
-			roles = append(roles, role)
-		}
-	}
-	return identityentity.NewActor(s.Handle, s.Groups, roles)
+	roles, _ := identityentity.ParseRoles(s.Roles)
+	groups, _ := identityentity.GroupNamesOf(s.Groups)
+	// The handle was validated when the session was minted; a cookie that has
+	// been tampered with does not open at all, so nothing unchecked reaches
+	// here.
+	return identityentity.NewActor(identityentity.Handle(s.Handle), groups, roles)
 }
 
 // Cookie is the cookie carrying this session, sealed.
