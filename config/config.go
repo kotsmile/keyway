@@ -120,7 +120,23 @@ type UnknownDirectoryError struct {
 }
 
 func (e *UnknownDirectoryError) Error() string {
-	return fmt.Sprintf("oidc.directory names an unknown kind %q; this build has: keycloak", e.Kind)
+	return fmt.Sprintf("oidc.directory names an unknown kind %q; this build has: %s",
+		e.Kind, joinDirectories(DirectoryKinds()))
+}
+
+// DirectoryKinds is every live directory this build can talk to, in the order
+// an error lists them. DirectoryNone is not among them: it is the absence of a
+// directory, not a name anybody can write.
+func DirectoryKinds() []DirectoryKind {
+	return []DirectoryKind{DirectoryKeycloak}
+}
+
+func joinDirectories(kinds []DirectoryKind) string {
+	words := make([]string, len(kinds))
+	for i, kind := range kinds {
+		words[i] = string(kind)
+	}
+	return strings.Join(words, ", ")
 }
 
 // UnmarshalYAML refuses a directory this build does not have, at parse.

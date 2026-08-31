@@ -1,4 +1,5 @@
-// Package secrets is the inventory, and the seam over whatever holds it.
+// Package service is the secrets inventory, and the seam over whatever holds
+// it.
 //
 // One deliberate deviation from the Rust layout: Store and Registry live here
 // rather than in the entity package. config already imports entity for the

@@ -1,4 +1,4 @@
-// Package identity is who is asking, and what keyway remembers about them.
+// Package service answers who is asking, and what keyway remembers about them.
 package service
 
 import (

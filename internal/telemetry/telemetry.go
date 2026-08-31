@@ -180,8 +180,9 @@ func (t *Telemetry) AuthFailure(reason string) {
 	t.authFailures.WithLabelValues(reason).Inc()
 }
 
-// BackendCall records one call into a backing secret manager. It is the
-// function secrets.ObserveBackendCall is set to at boot.
+// BackendCall records one call into a backing secret manager. It is what main
+// passes as the service's BackendObserver at boot; a Store built without one
+// is simply not instrumented.
 func (t *Telemetry) BackendCall(store, operation, outcome string, seconds float64) {
 	t.backendCalls.WithLabelValues(store, operation, outcome).Inc()
 	t.backendSeconds.WithLabelValues(store, operation).Observe(seconds)

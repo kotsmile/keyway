@@ -1,4 +1,4 @@
-// Package access is who may see what.
+// Package service answers who may see what.
 //
 // The rules live in entity and touch nothing: entity.Resolve is the whole
 // authorisation test, and it takes the grants it is given rather than

@@ -1,4 +1,4 @@
-// Package audit is what was done, and who did it.
+// Package service records what was done, and who did it.
 //
 // Reads are recorded alongside writes, which is unusual and intended: for a
 // secrets tool the interesting question is far more often "who looked at
