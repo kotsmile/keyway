@@ -15,13 +15,13 @@ import (
 // Repo is what this domain needs from storage.
 type Repo interface {
 	Insert(ctx context.Context, token entity.StoredToken) (time.Time, error)
-	ByID(ctx context.Context, id string) (*entity.StoredToken, error)
+	ByID(ctx context.Context, id entity.ID) (*entity.StoredToken, error)
 	ForSubject(ctx context.Context, subject string) ([]entity.Token, error)
-	Delete(ctx context.Context, subject, id string) (bool, error)
+	Delete(ctx context.Context, subject string, id entity.ID) (bool, error)
 	// Touch is best-effort: "last used" helps a person decide whether a token
 	// is still needed and is never an authorisation input, so a failure to
 	// write it must not fail a request.
-	Touch(ctx context.Context, id string, at time.Time)
+	Touch(ctx context.Context, id entity.ID, at time.Time)
 }
 
 // Service mints, verifies, lists and revokes.
@@ -36,7 +36,13 @@ func NewService(repo Repo) *Service {
 
 // Mint mints a token for `subject`. The plaintext is returned once and never
 // again — only its hash is stored.
-func (s *Service) Mint(ctx context.Context, subject, name string, expiresAt *time.Time) (entity.Minted, error) {
+//
+// The name arrives already read into an entity.Name, so "a name is required"
+// is answered before anything is generated: the alternative is minting
+// entropy and a row for a request that was never going to be accepted.
+func (s *Service) Mint(
+	ctx context.Context, subject string, name entity.Name, expiresAt *time.Time,
+) (entity.Minted, error) {
 	stored, plaintext, err := entity.Mint(subject, name, expiresAt)
 	if err != nil {
 		return entity.Minted{}, err
@@ -105,6 +111,6 @@ func (s *Service) List(ctx context.Context, subject string) ([]entity.Token, err
 // A caller reports "no such token" both for somebody else's and for one that
 // never existed: confirming that an id names a real token is a fact nobody
 // has any business learning by guessing.
-func (s *Service) Revoke(ctx context.Context, subject, id string) (bool, error) {
+func (s *Service) Revoke(ctx context.Context, subject string, id entity.ID) (bool, error) {
 	return s.repo.Delete(ctx, subject, id)
 }

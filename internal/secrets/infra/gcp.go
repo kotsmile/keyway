@@ -49,8 +49,8 @@ func (g *GcpSecretManager) parent() string {
 	return "projects/" + g.project
 }
 
-func (g *GcpSecretManager) secretName(name string) string {
-	return g.parent() + "/secrets/" + name
+func (g *GcpSecretManager) secretName(name entity.SecretName) string {
+	return g.parent() + "/secrets/" + name.String()
 }
 
 // gcpError maps what Google reports onto what keyway means. NotFound is an
@@ -106,7 +106,7 @@ func (g *GcpSecretManager) List(ctx context.Context) ([]entity.Secret, error) {
 			return nil, gcpError("listing google secrets", err)
 		}
 		out = append(out, entity.Secret{
-			Name:        leaf(listed.GetName()),
+			Name:        entity.SecretName(leaf(listed.GetName())),
 			Labels:      listed.GetLabels(),
 			Annotations: listed.GetAnnotations(),
 			// LatestVersion deliberately absent: resolving it costs one call
@@ -117,7 +117,7 @@ func (g *GcpSecretManager) List(ctx context.Context) ([]entity.Secret, error) {
 }
 
 // Get implements entity.SecretManager.
-func (g *GcpSecretManager) Get(ctx context.Context, name string) (entity.Secret, error) {
+func (g *GcpSecretManager) Get(ctx context.Context, name entity.SecretName) (entity.Secret, error) {
 	secret, err := g.client.GetSecret(ctx, &secretmanagerpb.GetSecretRequest{
 		Name: g.secretName(name),
 	})
@@ -131,7 +131,7 @@ func (g *GcpSecretManager) Get(ctx context.Context, name string) (entity.Secret,
 	if err != nil {
 		return entity.Secret{}, err
 	}
-	latest := ""
+	var latest entity.VersionID
 	for _, v := range versions {
 		if v.State == entity.VersionEnabled {
 			latest = v.ID
@@ -140,7 +140,7 @@ func (g *GcpSecretManager) Get(ctx context.Context, name string) (entity.Secret,
 	}
 
 	return entity.Secret{
-		Name:          leaf(secret.GetName()),
+		Name:          entity.SecretName(leaf(secret.GetName())),
 		Labels:        secret.GetLabels(),
 		Annotations:   secret.GetAnnotations(),
 		LatestVersion: latest,
@@ -149,7 +149,7 @@ func (g *GcpSecretManager) Get(ctx context.Context, name string) (entity.Secret,
 
 // Versions implements entity.SecretManager. Google returns newest first;
 // keyway promises the same.
-func (g *GcpSecretManager) Versions(ctx context.Context, name string) ([]entity.Version, error) {
+func (g *GcpSecretManager) Versions(ctx context.Context, name entity.SecretName) ([]entity.Version, error) {
 	var out []entity.Version
 	it := g.client.ListSecretVersions(ctx, &secretmanagerpb.ListSecretVersionsRequest{
 		Parent:   g.secretName(name),
@@ -164,19 +164,24 @@ func (g *GcpSecretManager) Versions(ctx context.Context, name string) ([]entity.
 			return nil, gcpError("listing google versions", err)
 		}
 		out = append(out, entity.Version{
-			ID:    leaf(listed.GetName()),
+			ID:    entity.VersionID(leaf(listed.GetName())),
 			State: gcpStateOf(listed.GetState()),
 		})
 	}
 }
 
 // Access implements entity.SecretManager.
-func (g *GcpSecretManager) Access(ctx context.Context, name, version string) ([]byte, error) {
-	if version == "" {
-		version = "latest"
+func (g *GcpSecretManager) Access(
+	ctx context.Context, name entity.SecretName, version entity.VersionID,
+) ([]byte, error) {
+	// `latest` is Google's own alias for the newest enabled version, which is
+	// exactly what an empty version means here.
+	asked := version.String()
+	if version.IsLatest() {
+		asked = "latest"
 	}
 	accessed, err := g.client.AccessSecretVersion(ctx, &secretmanagerpb.AccessSecretVersionRequest{
-		Name: g.secretName(name) + "/versions/" + version,
+		Name: g.secretName(name) + "/versions/" + asked,
 	})
 	if err != nil {
 		return nil, gcpError("reading a google secret's value", err)
@@ -187,7 +192,7 @@ func (g *GcpSecretManager) Access(ctx context.Context, name, version string) ([]
 // SetLabels implements entity.SecretManager. It replaces the labels, which
 // is what Google's update does with a field mask of `labels` — and what the
 // interface promises.
-func (g *GcpSecretManager) SetLabels(ctx context.Context, name string, labels entity.Metadata) error {
+func (g *GcpSecretManager) SetLabels(ctx context.Context, name entity.SecretName, labels entity.Metadata) error {
 	_, err := g.client.UpdateSecret(ctx, &secretmanagerpb.UpdateSecretRequest{
 		Secret: &secretmanagerpb.Secret{
 			Name:   g.secretName(name),
@@ -202,10 +207,10 @@ func (g *GcpSecretManager) SetLabels(ctx context.Context, name string, labels en
 }
 
 // Create implements entity.SecretManager.
-func (g *GcpSecretManager) Create(ctx context.Context, name string, labels entity.Metadata) error {
+func (g *GcpSecretManager) Create(ctx context.Context, name entity.SecretName, labels entity.Metadata) error {
 	_, err := g.client.CreateSecret(ctx, &secretmanagerpb.CreateSecretRequest{
 		Parent:   g.parent(),
-		SecretId: name,
+		SecretId: name.String(),
 		Secret: &secretmanagerpb.Secret{
 			Labels: labels,
 			// Google requires a replication policy and has no default.
@@ -225,7 +230,7 @@ func (g *GcpSecretManager) Create(ctx context.Context, name string, labels entit
 }
 
 // AddVersion implements entity.SecretManager.
-func (g *GcpSecretManager) AddVersion(ctx context.Context, name string, payload []byte) (entity.Version, error) {
+func (g *GcpSecretManager) AddVersion(ctx context.Context, name entity.SecretName, payload []byte) (entity.Version, error) {
 	added, err := g.client.AddSecretVersion(ctx, &secretmanagerpb.AddSecretVersionRequest{
 		Parent:  g.secretName(name),
 		Payload: &secretmanagerpb.SecretPayload{Data: payload},
@@ -234,13 +239,13 @@ func (g *GcpSecretManager) AddVersion(ctx context.Context, name string, payload 
 		return entity.Version{}, gcpError("adding a google secret version", err)
 	}
 	return entity.Version{
-		ID:    leaf(added.GetName()),
+		ID:    entity.VersionID(leaf(added.GetName())),
 		State: entity.VersionEnabled,
 	}, nil
 }
 
 // Delete implements entity.SecretManager.
-func (g *GcpSecretManager) Delete(ctx context.Context, name string) error {
+func (g *GcpSecretManager) Delete(ctx context.Context, name entity.SecretName) error {
 	err := g.client.DeleteSecret(ctx, &secretmanagerpb.DeleteSecretRequest{
 		Name: g.secretName(name),
 	})

@@ -41,10 +41,10 @@ func newWorld(t *testing.T) *world {
 	registry, err := secretsservice.NewRegistry([]*secretsservice.Store{
 		secretsservice.NewStore(config.StoreConfig{
 			ID:    "local",
-			Kind:  "keyway",
+			Kind:  config.KindKeyway,
 			Title: "The local vault",
 			Allow: []config.Verb{config.Read, config.Edit, config.Create, config.Delete},
-		}, newFakeManager("local")),
+		}, newFakeManager("local"), nil),
 	})
 	require.NoError(t, err)
 	codec, err := NewCodec(GenerateKey())
@@ -64,7 +64,8 @@ func newWorld(t *testing.T) *world {
 // serverAs starts a listener over the shared world, acting as one person —
 // the Rust support::app::start.
 func (w *world) serverAs(
-	t *testing.T, handle string, roles []identityentity.Role, groups []string,
+	t *testing.T, handle identityentity.Handle,
+	roles []identityentity.Role, groups []identityentity.GroupName,
 ) *httptest.Server {
 	t.Helper()
 	state := &State{
@@ -76,7 +77,7 @@ func (w *world) serverAs(
 		Auth: &Auth{
 			Tokens:   w.tokens,
 			Identity: w.identity,
-			Dev:      &DevActor{Handle: handle, Roles: roles, Groups: groups},
+			Dev:      &identityservice.DevActor{Handle: handle, Roles: roles, Groups: groups},
 			Codec:    w.codec,
 		},
 		Branding:     config.Branding{Name: "keyway", Accent: "#2563eb"},
@@ -209,7 +210,7 @@ func TestAGroupGrantReachesAMemberOverHTTP(t *testing.T) {
 	require.Equal(t, http.StatusOK, response.StatusCode)
 
 	// Bob is in SRE and holds no roles at all: the grant alone opens it.
-	bob := deployment.serverAs(t, "bob", nil, []string{"SRE"})
+	bob := deployment.serverAs(t, "bob", nil, []identityentity.GroupName{"SRE"})
 	value, err := bob.Client().Get(bob.URL + "/api/secrets/" + id + "/value?key=db_password")
 	require.NoError(t, err)
 	body := bodyOf(t, value)
@@ -231,7 +232,7 @@ func TestADelegatedBasisCarriesTheRustWireString(t *testing.T) {
 	}, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode)
 
-	bob := deployment.serverAs(t, "bob", nil, []string{"SRE Team"})
+	bob := deployment.serverAs(t, "bob", nil, []identityentity.GroupName{"SRE Team"})
 	var seen map[string]any
 	getJSON(t, bob.Client(), bob.URL+"/api/secrets/"+id, &seen)
 	assert.Equal(t, `delegated { subject: "sre team" }`, seen["basis"])
@@ -249,7 +250,7 @@ func TestAKeyScopedGrantOpensOnlyThatKeyOverHTTP(t *testing.T) {
 	}, nil)
 	require.Equal(t, http.StatusOK, response.StatusCode)
 
-	bob := deployment.serverAs(t, "bob", nil, []string{"SRE"})
+	bob := deployment.serverAs(t, "bob", nil, []identityentity.GroupName{"SRE"})
 	granted, err := bob.Client().Get(bob.URL + "/api/secrets/" + id + "/value?key=db_password")
 	require.NoError(t, err)
 	_ = granted.Body.Close()

@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+
+	identityentity "github.com/kotsmile/keyway/internal/identity/entity"
 )
 
 // pendingCookie is where the details of a redirect in progress are kept while
@@ -109,15 +111,15 @@ func callback(state *State) func(http.ResponseWriter, *http.Request) error {
 			return Internal(err)
 		}
 
-		slog.Info("signed in", "user", signedIn.Handle, "groups", len(signedIn.Groups))
+		slog.Info("signed in", "user", signedIn.Handle.String(), "groups", len(signedIn.Groups))
 
 		roles := make([]string, 0, len(signedIn.Roles))
 		for _, role := range signedIn.Roles {
 			roles = append(roles, role.String())
 		}
 		session := Session{
-			Handle:    signedIn.Handle,
-			Groups:    signedIn.Groups,
+			Handle:    signedIn.Handle.String(),
+			Groups:    identityentity.GroupWords(signedIn.Groups),
 			Roles:     roles,
 			ExpiresAt: state.Now().Add(time.Duration(state.SessionHours) * time.Hour),
 		}

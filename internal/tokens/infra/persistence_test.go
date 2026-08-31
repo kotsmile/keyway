@@ -52,7 +52,7 @@ func TestARustMintedRowVerifiesThroughTheGoService(t *testing.T) {
 	token, err := service.Verify(ctx, goldenPlaintext, time.Now())
 	require.NoError(t, err, "a Rust-minted token must keep working across the cutover")
 	assert.Equal(t, subject, token.Subject)
-	assert.Equal(t, "eso — payment-bot prod", token.Name)
+	assert.Equal(t, entity.Name("eso — payment-bot prod"), token.Name)
 }
 
 func TestMintVerifyListRevoke(t *testing.T) {
@@ -62,11 +62,11 @@ func TestMintVerifyListRevoke(t *testing.T) {
 	subject := aSubject(t)
 	service := tokensservice.NewService(infra.NewPostgresTokenRepo(db))
 
-	minted, err := service.Mint(ctx, subject, "eso prod", nil)
+	minted, err := service.Mint(ctx, subject, entity.Name("eso prod"), nil)
 	require.NoError(t, err)
 	assert.False(t, minted.Token.CreatedAt.IsZero(), "created_at is storage's answer")
 
-	verified, err := service.Verify(ctx, minted.Plaintext, time.Now())
+	verified, err := service.Verify(ctx, minted.Plaintext.Expose(), time.Now())
 	require.NoError(t, err)
 	assert.Equal(t, subject, verified.Subject)
 
@@ -80,7 +80,7 @@ func TestMintVerifyListRevoke(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, revoked)
 
-	_, err = service.Verify(ctx, minted.Plaintext, time.Now())
+	_, err = service.Verify(ctx, minted.Plaintext.Expose(), time.Now())
 	assert.ErrorIs(t, err, entity.Unknown, "a revoked token is gone outright")
 }
 
@@ -90,10 +90,10 @@ func TestAWrongSecretIsRejectedWithoutTouching(t *testing.T) {
 	subject := aSubject(t)
 	service := tokensservice.NewService(infra.NewPostgresTokenRepo(db))
 
-	minted, err := service.Mint(ctx, subject, "eso prod", nil)
+	minted, err := service.Mint(ctx, subject, entity.Name("eso prod"), nil)
 	require.NoError(t, err)
 
-	_, err = service.Verify(ctx, "kw-"+minted.Token.ID+"-not-the-secret", time.Now())
+	_, err = service.Verify(ctx, "kw-"+minted.Token.ID.String()+"-not-the-secret", time.Now())
 	assert.ErrorIs(t, err, entity.WrongSecret)
 
 	listed, err := service.List(ctx, subject)
@@ -109,9 +109,9 @@ func TestListingIsNewestFirst(t *testing.T) {
 	repo := infra.NewPostgresTokenRepo(db)
 	service := tokensservice.NewService(repo)
 
-	first, err := service.Mint(ctx, subject, "older", nil)
+	first, err := service.Mint(ctx, subject, entity.Name("older"), nil)
 	require.NoError(t, err)
-	second, err := service.Mint(ctx, subject, "newer", nil)
+	second, err := service.Mint(ctx, subject, entity.Name("newer"), nil)
 	require.NoError(t, err)
 	// created_at comes from now() with microsecond precision; two inserts in
 	// one transaction-less burst can tie, so order the tie away.
@@ -142,7 +142,7 @@ func TestRevokeIsScopedToTheSubject(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, revoked)
 
-	_, err = service.Verify(ctx, minted.Plaintext, time.Now())
+	_, err = service.Verify(ctx, minted.Plaintext.Expose(), time.Now())
 	assert.NoError(t, err, "the token still works for its owner")
 }
 
@@ -153,10 +153,10 @@ func TestAnExpiredRowIsRefusedButKept(t *testing.T) {
 	service := tokensservice.NewService(infra.NewPostgresTokenRepo(db))
 
 	expiry := time.Now().UTC().Add(time.Hour)
-	minted, err := service.Mint(ctx, subject, "short-lived", &expiry)
+	minted, err := service.Mint(ctx, subject, entity.Name("short-lived"), &expiry)
 	require.NoError(t, err)
 
-	_, err = service.Verify(ctx, minted.Plaintext, expiry.Add(time.Second))
+	_, err = service.Verify(ctx, minted.Plaintext.Expose(), expiry.Add(time.Second))
 	assert.ErrorIs(t, err, entity.Expired)
 
 	listed, err := service.List(ctx, subject)

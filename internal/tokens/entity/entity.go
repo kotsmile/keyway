@@ -16,7 +16,9 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 )
@@ -43,14 +45,64 @@ const secretBytes = 32
 // list stays a list.
 const MaxName = 80
 
+// ID is the public half of `kw-<id>-<secret>`.
+//
+// Not a secret: it is the lookup key, it is what an audit row names, and it
+// is the only half that ever exists anywhere but the one response that minted
+// the token. Typed so it cannot be confused with the secret half, which is
+// the one string in this package that must never be stored, logged or
+// compared outside Admits.
+type ID string
+
+// Name is what a person calls one of their tokens.
+//
+// Required, not defaulted: the name is the only thing that answers "can I
+// delete this one" in six months, and a list of identical defaults answers
+// nothing.
+type Name string
+
+// Plaintext is a minted token as its holder receives it: `kw-<id>-<secret>`.
+//
+// It exists once, in the response that created it. The type is what keeps it
+// there: String and LogValue both redact, so a token reaching a log line or a
+// %v — through slog, through fmt, through an error wrapping — prints as
+// nothing useful. JSON marshalling is deliberately untouched, because the one
+// response body that carries it must still carry it verbatim.
+//
+// The Rust side zeroized the plaintext on drop; Go's GC moves and copies
+// strings, so pretending to scrub one would be theatre. Redaction is the
+// discipline that can actually be enforced.
+type Plaintext string
+
+// Redacted is what a Plaintext renders as anywhere but the response body.
+const Redacted = "kw-<redacted>"
+
+// String redacts. See Plaintext.
+func (p Plaintext) String() string { return Redacted }
+
+// LogValue redacts for slog, which asks for this before it asks for String.
+func (p Plaintext) LogValue() slog.Value { return slog.StringValue(Redacted) }
+
+// Expose is the plaintext itself, for the one caller that has to write it out.
+//
+// Named so that reading the call site tells you a secret is leaving: the
+// alternative — a plain field — reads like every other string in the struct.
+func (p Plaintext) Expose() string { return string(p) }
+
+// String is the id as a URL, a row and an audit line spell it.
+func (i ID) String() string { return string(i) }
+
+// String is the name as a row and a list spell it.
+func (n Name) String() string { return string(n) }
+
 // Token is one issued token as a caller sees it. The plaintext is
 // deliberately absent: it exists once, in the response that created it.
 //
 // The subject is never serialised — the Rust struct skipped it too.
 type Token struct {
-	ID        string     `json:"id"`
+	ID        ID         `json:"id"`
 	Subject   string     `json:"-"`
-	Name      string     `json:"name"`
+	Name      Name       `json:"name"`
 	CreatedAt time.Time  `json:"created_at"`
 	ExpiresAt *time.Time `json:"expires_at"`
 	LastUsed  *time.Time `json:"last_used"`
@@ -58,10 +110,15 @@ type Token struct {
 
 // StoredToken is one issued token as storage holds it — the hash included.
 type StoredToken struct {
-	ID        string
-	Hash      []byte
+	ID   ID
+	Hash []byte
+	// Subject is the handle this token acts as. A plain string rather than
+	// the identity domain's Handle: tokens are verified by the transport
+	// before an Actor exists, and importing identity here to name a column
+	// would tie the credential format to the identity model it deliberately
+	// knows nothing about.
 	Subject   string
-	Name      string
+	Name      Name
 	CreatedAt time.Time
 	ExpiresAt *time.Time
 	LastUsed  *time.Time
@@ -123,26 +180,46 @@ func (r Rejected) Error() string {
 type Minted struct {
 	Token Token
 	// Plaintext goes into one response body and nowhere else.
-	Plaintext string
+	Plaintext Plaintext
 }
 
 // ErrNameRequired is a missing or over-long token name.
 var ErrNameRequired = fmt.Errorf("a name is required, up to %d characters", MaxName)
+
+// NewName reads a token name a caller supplied.
+//
+// Trimmed first, so " " is the empty name it looks like. The rule was
+// Mint's; it lives on the type now, because a name is checked when it is READ
+// from a request and refusing it at that point is what lets the caller be
+// told which field was wrong.
+func NewName(raw string) (Name, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || len(trimmed) > MaxName {
+		return "", ErrNameRequired
+	}
+	return Name(trimmed), nil
+}
+
+// ErrNotAnID is a string that could never have been a token id.
+var ErrNotAnID = errors.New("not a token id")
+
+// ParseID reads the public half of a token out of a URL or a row.
+//
+// Hex and non-empty — the same grammar Split relies on, kept in one place, so
+// a revoke route cannot accept an id this build could never have minted.
+func ParseID(raw string) (ID, error) {
+	if raw == "" || !isHex(raw) {
+		return "", ErrNotAnID
+	}
+	return ID(raw), nil
+}
 
 // Mint generates a token for `subject`.
 //
 // Returns what to store and what to show once. CreatedAt is left zero for
 // storage to fill, which is the only thing that can say when the row was
 // written.
-func Mint(subject, name string, expiresAt *time.Time) (StoredToken, string, error) {
-	name = strings.TrimSpace(name)
-	// Required, not defaulted to something like "token": the name is the only
-	// thing that answers "can I delete this one" in six months, and a list of
-	// identical defaults answers nothing.
-	if name == "" || len(name) > MaxName {
-		return StoredToken{}, "", ErrNameRequired
-	}
-
+func Mint(subject string, name Name, expiresAt *time.Time) (StoredToken, Plaintext, error) {
 	idRaw := make([]byte, idBytes)
 	if _, err := rand.Read(idRaw); err != nil {
 		return StoredToken{}, "", fmt.Errorf("generating a token: %w", err)
@@ -156,12 +233,12 @@ func Mint(subject, name string, expiresAt *time.Time) (StoredToken, string, erro
 	secret := base64.RawURLEncoding.EncodeToString(secretRaw)
 
 	return StoredToken{
-		ID:        id,
+		ID:        ID(id),
 		Hash:      hashSecret(secret),
 		Subject:   subject,
 		Name:      name,
 		ExpiresAt: expiresAt,
-	}, Prefix + "-" + id + "-" + secret, nil
+	}, Plaintext(Prefix + "-" + id + "-" + secret), nil
 }
 
 // Split splits `kw-<id>-<secret>`.
@@ -169,13 +246,17 @@ func Mint(subject, name string, expiresAt *time.Time) (StoredToken, string, erro
 // On the FIRST `-` after the prefix, which is only unambiguous because the id
 // is hex. The secret half is base64url and may well contain `-`; that is
 // fine, since everything after the separator is the secret.
-func Split(presented string) (id, secret string, ok bool) {
+func Split(presented string) (id ID, secret string, ok bool) {
 	rest, found := strings.CutPrefix(presented, Prefix+"-")
 	if !found {
 		return "", "", false
 	}
-	id, secret, found = strings.Cut(rest, "-")
-	if !found || id == "" || secret == "" || !isHex(id) {
+	raw, secret, found := strings.Cut(rest, "-")
+	if !found || secret == "" {
+		return "", "", false
+	}
+	id, err := ParseID(raw)
+	if err != nil {
 		return "", "", false
 	}
 	return id, secret, true

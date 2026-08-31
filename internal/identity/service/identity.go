@@ -13,7 +13,7 @@ import (
 type Repo interface {
 	Remember(ctx context.Context, user *entity.RememberedUser) error
 	// Recall is what was remembered, or nil if they have never signed in.
-	Recall(ctx context.Context, handle string) (*entity.RememberedUser, error)
+	Recall(ctx context.Context, handle entity.Handle) (*entity.RememberedUser, error)
 }
 
 // Directory is a live connection to the identity provider.
@@ -21,16 +21,55 @@ type Repo interface {
 // Optional by design (ADR-0004): configured, it replaces remembered groups
 // with a live answer and adds an account-enabled check. Unconfigured, keyway
 // calls no identity provider on any request.
+//
+// Note what this port does NOT include: caching. How long an answer may be
+// trusted is a policy about how fast a revocation must bite, not a property
+// of Keycloak's REST API — it lives in CachedDirectory, in this package, and
+// an implementation of this interface is expected to ask its provider every
+// single time it is called.
 type Directory interface {
 	// Resolve is what the directory says about somebody right now, or nil
 	// when they are gone from it entirely.
-	Resolve(ctx context.Context, handle string) (*DirectoryAnswer, error)
+	Resolve(ctx context.Context, handle entity.Handle) (*DirectoryAnswer, error)
 }
 
 // DirectoryAnswer is what a Directory says about somebody right now.
 type DirectoryAnswer struct {
 	Enabled bool
-	Groups  []string
+	Groups  []entity.GroupName
+}
+
+// Issuer is the browser door, as this domain needs it.
+//
+// The port is declared here rather than in the transport that calls it,
+// because Pending and SignedIn are this domain's vocabulary: what a redirect
+// must remember while somebody is at their provider, and who came back. The
+// OIDC client that implements it lives in infra and is the only thing that
+// knows what a discovery document or a PKCE verifier is.
+type Issuer interface {
+	// Start is where to send somebody, and what to remember while they are
+	// gone.
+	Start() Pending
+	// Finish exchanges the code for an identity. It fails when the exchange
+	// fails, the id token is absent, or its claims do not verify.
+	Finish(ctx context.Context, code, nonce, pkceVerifier string) (*SignedIn, error)
+}
+
+// Pending is what a redirect to the issuer needs remembering across it.
+type Pending struct {
+	AuthorizeURL string
+	CSRF         string
+	Nonce        string
+	PKCEVerifier string
+}
+
+// SignedIn is who signed in, as the claim describes them.
+type SignedIn struct {
+	Handle entity.Handle
+	Email  string
+	Name   string
+	Groups []entity.GroupName
+	Roles  []entity.Role
 }
 
 // Service is the identity domain's operations, wire-agnostic.
@@ -47,7 +86,10 @@ func NewService(repo Repo, directory Directory) *Service {
 
 // SignIn records a sign-in. The groups are REPLACED, never merged: somebody
 // removed from a team must lose it here on their next sign-in.
-func (s *Service) SignIn(ctx context.Context, handle string, groups []string, email, name string, at time.Time) error {
+func (s *Service) SignIn(
+	ctx context.Context, handle entity.Handle, groups []entity.GroupName,
+	email, name string, at time.Time,
+) error {
 	return s.repo.Remember(ctx, &entity.RememberedUser{
 		Handle:    handle,
 		Groups:    groups,
@@ -63,8 +105,10 @@ func (s *Service) SignIn(ctx context.Context, handle string, groups []string, em
 // resolves to nothing — which is what buys back "disable the account and
 // every token it issued dies". Without one, they are what was remembered at
 // the last sign-in.
-func (s *Service) ActorForToken(ctx context.Context, handle string, roles []entity.Role, tokenID string) (*entity.Actor, error) {
-	var groups []string
+func (s *Service) ActorForToken(
+	ctx context.Context, handle entity.Handle, roles []entity.Role, tokenID string,
+) (*entity.Actor, error) {
+	var groups []entity.GroupName
 	if s.directory != nil {
 		answer, err := s.directory.Resolve(ctx, handle)
 		if err != nil {
@@ -89,7 +133,7 @@ func (s *Service) ActorForToken(ctx context.Context, handle string, roles []enti
 }
 
 // Recall is what was remembered, or nil if they have never signed in.
-func (s *Service) Recall(ctx context.Context, handle string) (*entity.RememberedUser, error) {
+func (s *Service) Recall(ctx context.Context, handle entity.Handle) (*entity.RememberedUser, error) {
 	return s.repo.Recall(ctx, handle)
 }
 

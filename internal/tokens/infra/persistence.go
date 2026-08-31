@@ -29,6 +29,9 @@ func NewPostgresTokenRepo(db *sqlx.DB) *PostgresTokenRepo {
 	return &PostgresTokenRepo{db: db}
 }
 
+// tokenDTO is a row. The columns stay plain strings and the entity types are
+// put on and taken off here, which is what makes this package translation:
+// nothing but the driver's own vocabulary crosses into a query.
 type tokenDTO struct {
 	ID        string     `db:"id"`
 	Hash      []byte     `db:"hash"`
@@ -45,7 +48,7 @@ func (r *PostgresTokenRepo) Insert(ctx context.Context, token entity.StoredToken
 	err := r.db.GetContext(ctx, &createdAt,
 		`INSERT INTO tokens (id, hash, subject, name, expires_at)
 		 VALUES ($1, $2, $3, $4, $5) RETURNING created_at`,
-		token.ID, token.Hash, token.Subject, token.Name, token.ExpiresAt)
+		token.ID.String(), token.Hash, token.Subject, token.Name.String(), token.ExpiresAt)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("minting a token: %w", err)
 	}
@@ -53,11 +56,11 @@ func (r *PostgresTokenRepo) Insert(ctx context.Context, token entity.StoredToken
 }
 
 // ByID looks a token up by its public half.
-func (r *PostgresTokenRepo) ByID(ctx context.Context, id string) (*entity.StoredToken, error) {
+func (r *PostgresTokenRepo) ByID(ctx context.Context, id entity.ID) (*entity.StoredToken, error) {
 	var row tokenDTO
 	err := r.db.GetContext(ctx, &row,
 		`SELECT id, hash, subject, name, created_at, expires_at, last_used
-		 FROM tokens WHERE id = $1`, id)
+		 FROM tokens WHERE id = $1`, id.String())
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -65,10 +68,10 @@ func (r *PostgresTokenRepo) ByID(ctx context.Context, id string) (*entity.Stored
 		return nil, fmt.Errorf("looking up a token: %w", err)
 	}
 	return &entity.StoredToken{
-		ID:        row.ID,
+		ID:        entity.ID(row.ID),
 		Hash:      row.Hash,
 		Subject:   row.Subject,
-		Name:      row.Name,
+		Name:      entity.Name(row.Name),
 		CreatedAt: row.CreatedAt,
 		ExpiresAt: row.ExpiresAt,
 		LastUsed:  row.LastUsed,
@@ -93,9 +96,9 @@ func (r *PostgresTokenRepo) ForSubject(ctx context.Context, subject string) ([]e
 	out := make([]entity.Token, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, entity.Token{
-			ID:        row.ID,
+			ID:        entity.ID(row.ID),
 			Subject:   subject,
-			Name:      row.Name,
+			Name:      entity.Name(row.Name),
 			CreatedAt: row.CreatedAt,
 			ExpiresAt: row.ExpiresAt,
 			LastUsed:  row.LastUsed,
@@ -108,9 +111,9 @@ func (r *PostgresTokenRepo) ForSubject(ctx context.Context, subject string) ([]e
 //
 // Scoped to the subject in the statement rather than in a check before it, so
 // there is no window between deciding and doing.
-func (r *PostgresTokenRepo) Delete(ctx context.Context, subject, id string) (bool, error) {
+func (r *PostgresTokenRepo) Delete(ctx context.Context, subject string, id entity.ID) (bool, error) {
 	done, err := r.db.ExecContext(ctx,
-		`DELETE FROM tokens WHERE subject = $1 AND id = $2`, subject, id)
+		`DELETE FROM tokens WHERE subject = $1 AND id = $2`, subject, id.String())
 	if err != nil {
 		return false, fmt.Errorf("revoking a token: %w", err)
 	}
@@ -126,6 +129,6 @@ func (r *PostgresTokenRepo) Delete(ctx context.Context, subject, id string) (boo
 // Best-effort by construction: the result is discarded. "Last used" is a
 // convenience for the person deciding whether a token is still needed, never
 // an authorisation input.
-func (r *PostgresTokenRepo) Touch(ctx context.Context, id string, at time.Time) {
-	_, _ = r.db.ExecContext(ctx, `UPDATE tokens SET last_used = $2 WHERE id = $1`, id, at)
+func (r *PostgresTokenRepo) Touch(ctx context.Context, id entity.ID, at time.Time) {
+	_, _ = r.db.ExecContext(ctx, `UPDATE tokens SET last_used = $2 WHERE id = $1`, id.String(), at)
 }

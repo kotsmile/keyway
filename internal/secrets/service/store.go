@@ -1,10 +1,10 @@
 // Package secrets is the inventory, and the seam over whatever holds it.
 //
 // One deliberate deviation from the Rust layout: Store and Registry live here
-// rather than in the entity package. internal/config already imports entity
-// for the Metadata type, and a Store carries its config.StoreConfig — in Rust
-// both directions were fine across modules of one crate, in Go they would be
-// an import cycle.
+// rather than in the entity package. config already imports entity for the
+// Metadata and identifier types, and a Store carries its config.StoreConfig —
+// in Rust both directions were fine across modules of one crate, in Go they
+// would be an import cycle.
 package service
 
 import (
@@ -27,16 +27,19 @@ import (
 type Store struct {
 	config  config.StoreConfig
 	manager entity.SecretManager
+	// observe records each backend call. Injected, and nil for a Store nobody
+	// asked to instrument.
+	observe BackendObserver
 }
 
 // NotAllowedError is a verb this deployment did not grant here.
 type NotAllowedError struct {
-	Store string
+	Store entity.StoreID
 	Verb  config.Verb
 }
 
 func (e *NotAllowedError) Error() string {
-	return fmt.Sprintf("%s does not allow %q", e.Store, string(e.Verb))
+	return fmt.Sprintf("%s does not allow %q", e.Store.String(), string(e.Verb))
 }
 
 // ProtectedError is a secret a reconciler owns. Reported with the marker that
@@ -51,22 +54,46 @@ func (e *ProtectedError) Error() string {
 	return fmt.Sprintf("%s is managed by %s; edit the source instead", e.Name, e.Marker)
 }
 
-// ObserveBackendCall records one timed backend call: Store id, operation,
-// "ok" or "error", and the elapsed seconds. The labels stay a bounded set —
-// Store and operation, never a secret's name.
+// BackendObserver records one timed backend call: Store id, operation, "ok"
+// or "error", and the elapsed seconds. The labels stay a bounded set — Store
+// and operation, never a secret's name.
 //
-// It is the seam the telemetry port will fill (the Rust Store called
-// infra::telemetry::backend_call here); set it once at boot, before any Store
-// serves, or leave it nil.
-var ObserveBackendCall func(store, operation, outcome string, seconds float64)
+// It is the seam the telemetry port fills. A dependency of a Store, passed to
+// the constructor, rather than the package-level variable this used to be: a
+// mutable global assigned from main is a dependency nothing declares, that
+// two tests cannot hold different opinions about, and that reads as
+// configured-somewhere-else at every call site. Everything else keyway wires
+// is wired in main.go by name, and so is this.
+type BackendObserver func(store, operation, outcome string, seconds float64)
+
+// operation is the name a backend call is metered under.
+//
+// A bounded set, spelled once: an operation label is a time series per
+// distinct value, and one built from a caller's string would be a metrics
+// cardinality problem that only appears in production.
+type operation string
+
+const (
+	opList       operation = "list"
+	opGet        operation = "get"
+	opVersions   operation = "versions"
+	opAccess     operation = "access"
+	opAddVersion operation = "add_version"
+	opSetLabels  operation = "set_labels"
+	opCreate     operation = "create"
+	opDelete     operation = "delete"
+)
 
 // NewStore mounts a configured Store over its adapter.
-func NewStore(cfg config.StoreConfig, manager entity.SecretManager) *Store {
-	return &Store{config: cfg, manager: manager}
+//
+// observe may be nil, which is what a test that does not care about metrics
+// passes: the timing is then not recorded, and nothing else changes.
+func NewStore(cfg config.StoreConfig, manager entity.SecretManager, observe BackendObserver) *Store {
+	return &Store{config: cfg, manager: manager, observe: observe}
 }
 
 // ID is the Store's stable handle.
-func (s *Store) ID() string { return s.config.ID }
+func (s *Store) ID() entity.StoreID { return s.config.ID }
 
 // Config is the declaration this Store was mounted from.
 func (s *Store) Config() config.StoreConfig { return s.config }
@@ -79,7 +106,7 @@ func (s *Store) List(ctx context.Context) ([]entity.Secret, error) {
 	if err := s.require(config.Read); err != nil {
 		return nil, err
 	}
-	listed, err := timed(s, "list", func() ([]entity.Secret, error) { return s.manager.List(ctx) })
+	listed, err := timed(s, opList, func() ([]entity.Secret, error) { return s.manager.List(ctx) })
 	if err != nil {
 		return nil, err
 	}
@@ -102,11 +129,11 @@ func (s *Store) List(ctx context.Context) ([]entity.Secret, error) {
 //
 // It fails when `read` is not allowed, the secret is not exposed, or the
 // backend fails.
-func (s *Store) Get(ctx context.Context, name string) (entity.Secret, error) {
+func (s *Store) Get(ctx context.Context, name entity.SecretName) (entity.Secret, error) {
 	if err := s.require(config.Read); err != nil {
 		return entity.Secret{}, err
 	}
-	secret, err := timed(s, "get", func() (entity.Secret, error) { return s.manager.Get(ctx, name) })
+	secret, err := timed(s, opGet, func() (entity.Secret, error) { return s.manager.Get(ctx, name) })
 	if err != nil {
 		return entity.Secret{}, err
 	}
@@ -120,28 +147,28 @@ func (s *Store) Get(ctx context.Context, name string) (entity.Secret, error) {
 // Versions is the revision series, newest first.
 //
 // It fails as Get does.
-func (s *Store) Versions(ctx context.Context, name string) ([]entity.Version, error) {
+func (s *Store) Versions(ctx context.Context, name entity.SecretName) ([]entity.Version, error) {
 	if _, err := s.Get(ctx, name); err != nil {
 		return nil, err
 	}
-	return timed(s, "versions", func() ([]entity.Version, error) { return s.manager.Versions(ctx, name) })
+	return timed(s, opVersions, func() ([]entity.Version, error) { return s.manager.Versions(ctx, name) })
 }
 
 // Access is one version's payload. An empty version means the latest.
 //
 // It fails as Get does.
-func (s *Store) Access(ctx context.Context, name, version string) ([]byte, error) {
+func (s *Store) Access(ctx context.Context, name entity.SecretName, version entity.VersionID) ([]byte, error) {
 	if _, err := s.Get(ctx, name); err != nil {
 		return nil, err
 	}
-	return timed(s, "access", func() ([]byte, error) { return s.manager.Access(ctx, name, version) })
+	return timed(s, opAccess, func() ([]byte, error) { return s.manager.Access(ctx, name, version) })
 }
 
 // AddVersion writes a new revision.
 //
 // It fails when `edit` is not allowed, a reconciler owns the secret, or the
 // backend fails.
-func (s *Store) AddVersion(ctx context.Context, name string, payload []byte) (entity.Version, error) {
+func (s *Store) AddVersion(ctx context.Context, name entity.SecretName, payload []byte) (entity.Version, error) {
 	if err := s.require(config.Edit); err != nil {
 		return entity.Version{}, err
 	}
@@ -152,13 +179,13 @@ func (s *Store) AddVersion(ctx context.Context, name string, payload []byte) (en
 	if err := s.requireUnprotected(secret); err != nil {
 		return entity.Version{}, err
 	}
-	return timed(s, "add_version", func() (entity.Version, error) { return s.manager.AddVersion(ctx, name, payload) })
+	return timed(s, opAddVersion, func() (entity.Version, error) { return s.manager.AddVersion(ctx, name, payload) })
 }
 
 // SetLabels replaces a secret's labels.
 //
 // It fails as AddVersion does.
-func (s *Store) SetLabels(ctx context.Context, name string, labels entity.Metadata) error {
+func (s *Store) SetLabels(ctx context.Context, name entity.SecretName, labels entity.Metadata) error {
 	if err := s.require(config.Edit); err != nil {
 		return err
 	}
@@ -169,18 +196,18 @@ func (s *Store) SetLabels(ctx context.Context, name string, labels entity.Metada
 	if err := s.requireUnprotected(secret); err != nil {
 		return err
 	}
-	_, err = timed(s, "set_labels", func() (struct{}, error) { return struct{}{}, s.manager.SetLabels(ctx, name, labels) })
+	_, err = timed(s, opSetLabels, func() (struct{}, error) { return struct{}{}, s.manager.SetLabels(ctx, name, labels) })
 	return err
 }
 
 // Create brings a new secret into existence.
 //
 // It fails when `create` is not allowed, or the backend fails.
-func (s *Store) Create(ctx context.Context, name string, labels entity.Metadata) error {
+func (s *Store) Create(ctx context.Context, name entity.SecretName, labels entity.Metadata) error {
 	if err := s.require(config.Create); err != nil {
 		return err
 	}
-	_, err := timed(s, "create", func() (struct{}, error) { return struct{}{}, s.manager.Create(ctx, name, labels) })
+	_, err := timed(s, opCreate, func() (struct{}, error) { return struct{}{}, s.manager.Create(ctx, name, labels) })
 	return err
 }
 
@@ -188,7 +215,7 @@ func (s *Store) Create(ctx context.Context, name string, labels entity.Metadata)
 //
 // It fails when `delete` is not allowed, a reconciler owns the secret, or the
 // backend fails.
-func (s *Store) Delete(ctx context.Context, name string) error {
+func (s *Store) Delete(ctx context.Context, name entity.SecretName) error {
 	if err := s.require(config.Delete); err != nil {
 		return err
 	}
@@ -199,7 +226,7 @@ func (s *Store) Delete(ctx context.Context, name string) error {
 	if err := s.requireUnprotected(secret); err != nil {
 		return err
 	}
-	_, err = timed(s, "delete", func() (struct{}, error) { return struct{}{}, s.manager.Delete(ctx, name) })
+	_, err = timed(s, opDelete, func() (struct{}, error) { return struct{}{}, s.manager.Delete(ctx, name) })
 	return err
 }
 
@@ -207,16 +234,17 @@ func (s *Store) Delete(ctx context.Context, name string) error {
 //
 // Here rather than in each adapter, for the same reason `allow` is: a new
 // backend cannot forget, and the labels stay a bounded set.
-func timed[T any](s *Store, operation string, call func() (T, error)) (T, error) {
+func timed[T any](s *Store, op operation, call func() (T, error)) (T, error) {
+	if s.observe == nil {
+		return call()
+	}
 	started := time.Now()
 	result, err := call()
-	if ObserveBackendCall != nil {
-		outcome := "ok"
-		if err != nil {
-			outcome = "error"
-		}
-		ObserveBackendCall(s.config.ID, operation, outcome, time.Since(started).Seconds())
+	outcome := "ok"
+	if err != nil {
+		outcome = "error"
 	}
+	s.observe(s.config.ID.String(), string(op), outcome, time.Since(started).Seconds())
 	return result, err
 }
 

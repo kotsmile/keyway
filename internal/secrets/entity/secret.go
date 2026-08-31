@@ -7,25 +7,25 @@ package entity
 // reveals nobody performed.
 type Secret struct {
 	// Store is which Store it lives in.
-	Store string `json:"store"`
+	Store StoreID `json:"store"`
 	// Name is what the backend knows it by. Not what keyway addresses it by:
 	// the API speaks uuids, because a name is somebody else's contract — ESO
 	// manifests and existing tooling address these by name, and renaming them
 	// to uuids would break every one of those to buy keyway an id it can
 	// carry in a label instead.
-	Name        string   `json:"name"`
-	Labels      Metadata `json:"labels,omitempty"`
-	Annotations Metadata `json:"annotations,omitempty"`
+	Name        SecretName `json:"name"`
+	Labels      Metadata   `json:"labels,omitempty"`
+	Annotations Metadata   `json:"annotations,omitempty"`
 	// LatestVersion is the version an unqualified read resolves to. Empty for
 	// a secret that exists but has never been given a payload, which some
 	// backends allow and which reads as "not set" rather than as an error.
-	LatestVersion string `json:"latest_version,omitempty"`
+	LatestVersion VersionID `json:"latest_version,omitempty"`
 }
 
 // Reference is where this secret lives, as it reads in an error or a log
 // line.
 func (s Secret) Reference() string {
-	return s.Store + "/" + s.Name
+	return s.Store.String() + "/" + s.Name.String()
 }
 
 // Version is one immutable revision as the backend records it.
@@ -34,7 +34,7 @@ func (s Secret) Reference() string {
 // version, and that gap is exactly what keyway's audit log fills.
 type Version struct {
 	// ID is the backend's own identifier for it.
-	ID    string       `json:"id"`
+	ID    VersionID    `json:"id"`
 	State VersionState `json:"state"`
 }
 
@@ -48,6 +48,31 @@ const (
 	// offer to reveal it.
 	VersionDestroyed VersionState = "destroyed"
 )
+
+// ParseVersionState reads a state out of the word a backend or a row uses.
+//
+// An unrecognised word reads as DESTROYED rather than as enabled, and that is
+// the whole reason this is a function in the entity package rather than a
+// switch in each adapter: "a state this build does not understand must not be
+// offered for reveal" is a rule about payloads, and a rule kept in five
+// places is a rule four of them can get wrong. The adapters map their own
+// vocabulary onto these words (Google's enum, AWS's stage labels) and hand
+// the word here.
+func ParseVersionState(word string) VersionState {
+	switch VersionState(word) {
+	case VersionEnabled:
+		return VersionEnabled
+	case VersionDisabled:
+		return VersionDisabled
+	default:
+		return VersionDestroyed
+	}
+}
+
+// Word is how a row stores this state.
+func (s VersionState) Word() string {
+	return string(ParseVersionState(string(s)))
+}
 
 // Readable is whether this version still has a payload to reveal.
 func (v Version) Readable() bool {

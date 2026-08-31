@@ -35,7 +35,7 @@ var idNamespace = uuid.MustParse("9f2c4e8a-7b31-4d6f-a05e-1c837d942b60")
 // Derivation is v5, so it is stable across processes, restarts and replicas —
 // three keyway pods answer the same uuid for the same secret without
 // coordinating.
-func IDOf(store, name string, labels Metadata) uuid.UUID {
+func IDOf(store StoreID, name SecretName, labels Metadata) uuid.UUID {
 	if labelled, err := uuid.Parse(labels[IDLabel]); err == nil {
 		return labelled
 	}
@@ -43,8 +43,8 @@ func IDOf(store, name string, labels Metadata) uuid.UUID {
 }
 
 // Derive is the id a secret takes when the backend carries no label.
-func Derive(store, name string) uuid.UUID {
-	return uuid.NewSHA1(idNamespace, []byte(store+"/"+name))
+func Derive(store StoreID, name SecretName) uuid.UUID {
+	return uuid.NewSHA1(idNamespace, []byte(store.String()+"/"+name.String()))
 }
 
 // IDFor is the id this secret answers to.

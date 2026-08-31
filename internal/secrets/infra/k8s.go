@@ -85,12 +85,12 @@ func k8sIntoSecret(secret *corev1.Secret) (entity.Secret, bool) {
 		return entity.Secret{}, false
 	}
 	return entity.Secret{
-		Name:        secret.Name,
+		Name:        entity.SecretName(secret.Name),
 		Labels:      secret.Labels,
 		Annotations: secret.Annotations,
 		// resourceVersion changes on every write and identifies the current
 		// state. It is the only version id a Kubernetes Secret has.
-		LatestVersion: secret.ResourceVersion,
+		LatestVersion: entity.VersionID(secret.ResourceVersion),
 	}, true
 }
 
@@ -155,8 +155,8 @@ func (k *KubernetesSecrets) List(ctx context.Context) ([]entity.Secret, error) {
 }
 
 // Get implements entity.SecretManager.
-func (k *KubernetesSecrets) Get(ctx context.Context, name string) (entity.Secret, error) {
-	fetched, err := k.api.Get(ctx, name, metav1.GetOptions{})
+func (k *KubernetesSecrets) Get(ctx context.Context, name entity.SecretName) (entity.Secret, error) {
+	fetched, err := k.api.Get(ctx, name.String(), metav1.GetOptions{})
 	if err != nil {
 		return entity.Secret{}, k8sError("reading a kubernetes secret", err)
 	}
@@ -172,7 +172,7 @@ func (k *KubernetesSecrets) Get(ctx context.Context, name string) (entity.Secret
 // Kubernetes keeps no history: a Secret has one value and a write replaces
 // it. Reporting a single version is the honest answer — inventing a series
 // would promise older values that cannot be fetched.
-func (k *KubernetesSecrets) Versions(ctx context.Context, name string) ([]entity.Version, error) {
+func (k *KubernetesSecrets) Versions(ctx context.Context, name entity.SecretName) ([]entity.Version, error) {
 	secret, err := k.Get(ctx, name)
 	if err != nil {
 		return nil, err
@@ -184,8 +184,8 @@ func (k *KubernetesSecrets) Versions(ctx context.Context, name string) ([]entity
 }
 
 // Access implements entity.SecretManager.
-func (k *KubernetesSecrets) Access(ctx context.Context, name, version string) ([]byte, error) {
-	fetched, err := k.api.Get(ctx, name, metav1.GetOptions{})
+func (k *KubernetesSecrets) Access(ctx context.Context, name entity.SecretName, version entity.VersionID) ([]byte, error) {
+	fetched, err := k.api.Get(ctx, name.String(), metav1.GetOptions{})
 	if err != nil {
 		return nil, k8sError("reading a kubernetes secret's value", err)
 	}
@@ -193,14 +193,14 @@ func (k *KubernetesSecrets) Access(ctx context.Context, name, version string) ([
 	// Asking for anything but the current revision is a request Kubernetes
 	// cannot serve, and saying so beats quietly returning the current one
 	// under a version id the caller did not ask for.
-	if version != "" && fetched.ResourceVersion != version {
+	if !version.IsLatest() && fetched.ResourceVersion != version.String() {
 		return nil, &entity.NoSuchVersionError{Version: version}
 	}
 	return k8sPayloadOf(fetched)
 }
 
 // SetLabels implements entity.SecretManager.
-func (k *KubernetesSecrets) SetLabels(ctx context.Context, name string, labels entity.Metadata) error {
+func (k *KubernetesSecrets) SetLabels(ctx context.Context, name entity.SecretName, labels entity.Metadata) error {
 	// A merge patch with the full map, which is what the Rust adapter sent —
 	// a strategic merge would only ever add.
 	patch, err := json.Marshal(map[string]any{
@@ -209,17 +209,17 @@ func (k *KubernetesSecrets) SetLabels(ctx context.Context, name string, labels e
 	if err != nil {
 		return entity.Backend("setting labels on a kubernetes secret", err)
 	}
-	if _, err := k.api.Patch(ctx, name, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
+	if _, err := k.api.Patch(ctx, name.String(), types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
 		return k8sError("setting labels on a kubernetes secret", err)
 	}
 	return nil
 }
 
 // Create implements entity.SecretManager.
-func (k *KubernetesSecrets) Create(ctx context.Context, name string, labels entity.Metadata) error {
+func (k *KubernetesSecrets) Create(ctx context.Context, name entity.SecretName, labels entity.Metadata) error {
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
+			Name:      name.String(),
 			Namespace: k.namespace,
 			Labels:    labels,
 		},
@@ -231,7 +231,7 @@ func (k *KubernetesSecrets) Create(ctx context.Context, name string, labels enti
 }
 
 // AddVersion implements entity.SecretManager.
-func (k *KubernetesSecrets) AddVersion(ctx context.Context, name string, payload []byte) (entity.Version, error) {
+func (k *KubernetesSecrets) AddVersion(ctx context.Context, name entity.SecretName, payload []byte) (entity.Version, error) {
 	patch, err := json.Marshal(map[string]any{
 		// `stringData` rather than `data`, so Kubernetes does the base64
 		// encoding and keyway cannot get it wrong.
@@ -242,19 +242,19 @@ func (k *KubernetesSecrets) AddVersion(ctx context.Context, name string, payload
 		return entity.Version{}, entity.Backend("writing a kubernetes secret", err)
 	}
 
-	written, err := k.api.Patch(ctx, name, types.MergePatchType, patch, metav1.PatchOptions{})
+	written, err := k.api.Patch(ctx, name.String(), types.MergePatchType, patch, metav1.PatchOptions{})
 	if err != nil {
 		return entity.Version{}, k8sError("writing a kubernetes secret", err)
 	}
 	return entity.Version{
-		ID:    written.ResourceVersion,
+		ID:    entity.VersionID(written.ResourceVersion),
 		State: entity.VersionEnabled,
 	}, nil
 }
 
 // Delete implements entity.SecretManager.
-func (k *KubernetesSecrets) Delete(ctx context.Context, name string) error {
-	if err := k.api.Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
+func (k *KubernetesSecrets) Delete(ctx context.Context, name entity.SecretName) error {
+	if err := k.api.Delete(ctx, name.String(), metav1.DeleteOptions{}); err != nil {
 		return k8sError("deleting a kubernetes secret", err)
 	}
 	return nil

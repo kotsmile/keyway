@@ -341,14 +341,14 @@ func (y *YcLockbox) allSecrets(ctx context.Context) ([]ycSecret, error) {
 // Lockbox does not require names to be unique, so two secrets may answer to
 // one name. Picking either would mean a reveal that silently reads the wrong
 // secret, so this refuses instead.
-func (y *YcLockbox) idOf(ctx context.Context, name string) (string, error) {
+func (y *YcLockbox) idOf(ctx context.Context, name entity.SecretName) (string, error) {
 	all, err := y.allSecrets(ctx)
 	if err != nil {
 		return "", err
 	}
 	var matching []ycSecret
 	for _, s := range all {
-		if s.Name == name {
+		if s.Name == name.String() {
 			matching = append(matching, s)
 		}
 	}
@@ -373,9 +373,9 @@ func ycIntoSecret(secret ycSecret) entity.Secret {
 		latest = v.ID
 	}
 	return entity.Secret{
-		Name:          secret.Name,
+		Name:          entity.SecretName(secret.Name),
 		Labels:        secret.Labels,
-		LatestVersion: latest,
+		LatestVersion: entity.VersionID(latest),
 	}
 }
 
@@ -393,13 +393,13 @@ func (y *YcLockbox) List(ctx context.Context) ([]entity.Secret, error) {
 }
 
 // Get implements entity.SecretManager.
-func (y *YcLockbox) Get(ctx context.Context, name string) (entity.Secret, error) {
+func (y *YcLockbox) Get(ctx context.Context, name entity.SecretName) (entity.Secret, error) {
 	all, err := y.allSecrets(ctx)
 	if err != nil {
 		return entity.Secret{}, err
 	}
 	for _, s := range all {
-		if s.Name == name {
+		if s.Name == name.String() {
 			return ycIntoSecret(s), nil
 		}
 	}
@@ -407,7 +407,7 @@ func (y *YcLockbox) Get(ctx context.Context, name string) (entity.Secret, error)
 }
 
 // Versions implements entity.SecretManager.
-func (y *YcLockbox) Versions(ctx context.Context, name string) ([]entity.Version, error) {
+func (y *YcLockbox) Versions(ctx context.Context, name entity.SecretName) ([]entity.Version, error) {
 	id, err := y.idOf(ctx, name)
 	if err != nil {
 		return nil, err
@@ -426,7 +426,7 @@ func (y *YcLockbox) Versions(ctx context.Context, name string) ([]entity.Version
 			return nil, err
 		}
 		for _, v := range listed.Versions {
-			out = append(out, entity.Version{ID: v.ID, State: ycStateOf(v.Status)})
+			out = append(out, entity.Version{ID: entity.VersionID(v.ID), State: ycStateOf(v.Status)})
 		}
 		page = listed.NextPageToken
 		if page == "" {
@@ -436,14 +436,16 @@ func (y *YcLockbox) Versions(ctx context.Context, name string) ([]entity.Version
 }
 
 // Access implements entity.SecretManager.
-func (y *YcLockbox) Access(ctx context.Context, name, version string) ([]byte, error) {
+func (y *YcLockbox) Access(
+	ctx context.Context, name entity.SecretName, version entity.VersionID,
+) ([]byte, error) {
 	id, err := y.idOf(ctx, name)
 	if err != nil {
 		return nil, err
 	}
 	address := ycPayload + "/secrets/" + url.PathEscape(id) + "/payload"
-	if version != "" {
-		address += "?" + url.Values{"versionId": {version}}.Encode()
+	if !version.IsLatest() {
+		address += "?" + url.Values{"versionId": {version.String()}}.Encode()
 	}
 	var payload ycPayloadResponse
 	if err := y.send(ctx, http.MethodGet, address, nil, &payload, "reading a lockbox payload"); err != nil {
@@ -455,7 +457,7 @@ func (y *YcLockbox) Access(ctx context.Context, name, version string) ([]byte, e
 // SetLabels implements entity.SecretManager. Lockbox has labels but no
 // separate annotations, so this replaces labels — which is what the
 // interface promises.
-func (y *YcLockbox) SetLabels(ctx context.Context, name string, labels entity.Metadata) error {
+func (y *YcLockbox) SetLabels(ctx context.Context, name entity.SecretName, labels entity.Metadata) error {
 	id, err := y.idOf(ctx, name)
 	if err != nil {
 		return err
@@ -468,11 +470,11 @@ func (y *YcLockbox) SetLabels(ctx context.Context, name string, labels entity.Me
 // Create implements entity.SecretManager. Lockbox creates a secret and its
 // first version together, so keyway's split shape becomes a secret with one
 // empty entry that the first AddVersion replaces.
-func (y *YcLockbox) Create(ctx context.Context, name string, labels entity.Metadata) error {
+func (y *YcLockbox) Create(ctx context.Context, name entity.SecretName, labels entity.Metadata) error {
 	return y.send(ctx, http.MethodPost, ycLockbox+"/secrets",
 		map[string]any{
 			"folderId":              y.folder,
-			"name":                  name,
+			"name":                  name.String(),
 			"labels":                labels,
 			"versionPayloadEntries": []map[string]string{{"key": "value", "textValue": ""}},
 		},
@@ -480,7 +482,7 @@ func (y *YcLockbox) Create(ctx context.Context, name string, labels entity.Metad
 }
 
 // AddVersion implements entity.SecretManager.
-func (y *YcLockbox) AddVersion(ctx context.Context, name string, payload []byte) (entity.Version, error) {
+func (y *YcLockbox) AddVersion(ctx context.Context, name entity.SecretName, payload []byte) (entity.Version, error) {
 	id, err := y.idOf(ctx, name)
 	if err != nil {
 		return entity.Version{}, err
@@ -512,7 +514,7 @@ func (y *YcLockbox) AddVersion(ctx context.Context, name string, payload []byte)
 }
 
 // Delete implements entity.SecretManager.
-func (y *YcLockbox) Delete(ctx context.Context, name string) error {
+func (y *YcLockbox) Delete(ctx context.Context, name entity.SecretName) error {
 	id, err := y.idOf(ctx, name)
 	if err != nil {
 		return err

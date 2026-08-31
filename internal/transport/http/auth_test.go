@@ -21,11 +21,11 @@ import (
 // lives above the repository, so the repository can be trivial.
 type stubTokenRepo struct {
 	mu     sync.Mutex
-	stored map[string]tokensentity.StoredToken
+	stored map[tokensentity.ID]tokensentity.StoredToken
 }
 
 func newStubTokenRepo() *stubTokenRepo {
-	return &stubTokenRepo{stored: map[string]tokensentity.StoredToken{}}
+	return &stubTokenRepo{stored: map[tokensentity.ID]tokensentity.StoredToken{}}
 }
 
 func (r *stubTokenRepo) Insert(_ context.Context, token tokensentity.StoredToken) (time.Time, error) {
@@ -36,7 +36,7 @@ func (r *stubTokenRepo) Insert(_ context.Context, token tokensentity.StoredToken
 	return token.CreatedAt, nil
 }
 
-func (r *stubTokenRepo) ByID(_ context.Context, id string) (*tokensentity.StoredToken, error) {
+func (r *stubTokenRepo) ByID(_ context.Context, id tokensentity.ID) (*tokensentity.StoredToken, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	token, ok := r.stored[id]
@@ -61,7 +61,7 @@ func (r *stubTokenRepo) ForSubject(_ context.Context, subject string) ([]tokense
 	return out, nil
 }
 
-func (r *stubTokenRepo) Delete(_ context.Context, subject, id string) (bool, error) {
+func (r *stubTokenRepo) Delete(_ context.Context, subject string, id tokensentity.ID) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	stored, ok := r.stored[id]
@@ -72,16 +72,16 @@ func (r *stubTokenRepo) Delete(_ context.Context, subject, id string) (bool, err
 	return true, nil
 }
 
-func (r *stubTokenRepo) Touch(_ context.Context, _ string, _ time.Time) {}
+func (r *stubTokenRepo) Touch(_ context.Context, _ tokensentity.ID, _ time.Time) {}
 
 // stubIdentityRepo remembers sign-ins in a map.
 type stubIdentityRepo struct {
 	mu    sync.Mutex
-	users map[string]identityentity.RememberedUser
+	users map[identityentity.Handle]identityentity.RememberedUser
 }
 
 func newStubIdentityRepo() *stubIdentityRepo {
-	return &stubIdentityRepo{users: map[string]identityentity.RememberedUser{}}
+	return &stubIdentityRepo{users: map[identityentity.Handle]identityentity.RememberedUser{}}
 }
 
 func (r *stubIdentityRepo) Remember(_ context.Context, user *identityentity.RememberedUser) error {
@@ -91,7 +91,7 @@ func (r *stubIdentityRepo) Remember(_ context.Context, user *identityentity.Reme
 	return nil
 }
 
-func (r *stubIdentityRepo) Recall(_ context.Context, handle string) (*identityentity.RememberedUser, error) {
+func (r *stubIdentityRepo) Recall(_ context.Context, handle identityentity.Handle) (*identityentity.RememberedUser, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	user, ok := r.users[handle]
@@ -103,7 +103,7 @@ func (r *stubIdentityRepo) Recall(_ context.Context, handle string) (*identityen
 
 // authUnderTest is an Auth over in-memory services, with the clock held
 // still.
-func authUnderTest(t *testing.T, dev *DevActor) (*Auth, *tokensservice.Service, *stubIdentityRepo) {
+func authUnderTest(t *testing.T, dev *identityservice.DevActor) (*Auth, *tokensservice.Service, *stubIdentityRepo) {
 	t.Helper()
 	tokenService := tokensservice.NewService(newStubTokenRepo())
 	users := newStubIdentityRepo()
@@ -123,13 +123,13 @@ func TestABearerTokenActsAsThePersonWhoMintedIt(t *testing.T) {
 
 	// alice signed in once; her groups were remembered (ADR-0004).
 	require.NoError(t, users.Remember(ctx, &identityentity.RememberedUser{
-		Handle: "alice", Groups: []string{"SRE"},
+		Handle: "alice", Groups: []identityentity.GroupName{"SRE"},
 	}))
 	minted, err := tokenService.Mint(ctx, "alice", "ci", nil)
 	require.NoError(t, err)
 
 	request := httptest.NewRequest(http.MethodGet, "/api/me", nil)
-	request.Header.Set("Authorization", "Bearer "+minted.Plaintext)
+	request.Header.Set("Authorization", "Bearer "+minted.Plaintext.Expose())
 
 	actor, err := auth.Resolve(request)
 	require.NoError(t, err)
@@ -138,7 +138,7 @@ func TestABearerTokenActsAsThePersonWhoMintedIt(t *testing.T) {
 		"a token carries its holder's remembered groups")
 	tokenID, viaToken := actor.TokenID()
 	assert.True(t, viaToken, "the audit line must say which token acted")
-	assert.Equal(t, minted.Token.ID, tokenID)
+	assert.Equal(t, minted.Token.ID.String(), tokenID)
 	assert.False(t, actor.IsAdmin(), "a token carries no roles of its own")
 }
 
@@ -154,7 +154,7 @@ func TestEveryTokenRejectionAnswersTheSame401(t *testing.T) {
 	for name, presented := range map[string]string{
 		"malformed":    "not-a-token",
 		"unknown id":   "kw-ffffffffffffffff-ffffffffffffffffffffffffffffffff",
-		"wrong secret": minted.Plaintext + "x",
+		"wrong secret": minted.Plaintext.Expose() + "x",
 	} {
 		request := httptest.NewRequest(http.MethodGet, "/api/me", nil)
 		request.Header.Set("Authorization", "Bearer "+presented)
@@ -188,7 +188,7 @@ func TestAnExpiredSessionIsRefusedNotIgnored(t *testing.T) {
 	// Expired rather than absent: saying so is what lets the console send
 	// somebody back to sign in instead of showing an empty page. It also must
 	// NOT fall through to the dev actor.
-	auth, _, _ := authUnderTest(t, &DevActor{Handle: "dev"})
+	auth, _, _ := authUnderTest(t, &identityservice.DevActor{Handle: "dev"})
 	cookie, err := session(time.Now().Add(-time.Minute)).Cookie(auth.Codec, 1)
 	require.NoError(t, err)
 
@@ -203,10 +203,10 @@ func TestAnExpiredSessionIsRefusedNotIgnored(t *testing.T) {
 
 func TestNoCredentialInDevModeIsTheConfiguredUser(t *testing.T) {
 	t.Parallel()
-	auth, _, _ := authUnderTest(t, &DevActor{
+	auth, _, _ := authUnderTest(t, &identityservice.DevActor{
 		Handle: "dev",
 		Roles:  []identityentity.Role{identityentity.RoleAdmin, identityentity.RoleCreate},
-		Groups: []string{"local"},
+		Groups: []identityentity.GroupName{"local"},
 	})
 
 	actor, err := auth.Resolve(httptest.NewRequest(http.MethodGet, "/api/me", nil))
@@ -238,7 +238,7 @@ func TestABearerHeaderWinsOverACookie(t *testing.T) {
 
 	request := httptest.NewRequest(http.MethodGet, "/api/me", nil)
 	request.AddCookie(cookie)
-	request.Header.Set("Authorization", "Bearer "+minted.Plaintext)
+	request.Header.Set("Authorization", "Bearer "+minted.Plaintext.Expose())
 
 	actor, err := auth.Resolve(request)
 	require.NoError(t, err)
@@ -247,7 +247,7 @@ func TestABearerHeaderWinsOverACookie(t *testing.T) {
 
 func TestMiddlewareCarriesTheActorToTheHandler(t *testing.T) {
 	t.Parallel()
-	auth, _, _ := authUnderTest(t, &DevActor{Handle: "dev"})
+	auth, _, _ := authUnderTest(t, &identityservice.DevActor{Handle: "dev"})
 
 	var seen identityentity.Actor
 	handler := auth.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -75,7 +75,7 @@ func keyring(t *testing.T, active string, keys map[string]string) *entity.Keyrin
 	return ring
 }
 
-func mountedOwn(t *testing.T, db *sqlx.DB, id, active string, keys map[string]string) *secretsservice.OwnStoreService {
+func mountedOwn(t *testing.T, db *sqlx.DB, id entity.StoreID, active string, keys map[string]string) *secretsservice.OwnStoreService {
 	t.Helper()
 	return secretsservice.NewOwnStoreService(id, NewPostgresOwnStoreRepo(db), keyring(t, active, keys))
 }
@@ -85,7 +85,7 @@ func ownStore(t *testing.T, db *sqlx.DB, active string, keys map[string]string) 
 	return mountedOwn(t, db, "local", active, keys)
 }
 
-func withSecret(t *testing.T, store *secretsservice.OwnStoreService, name string, payload []byte) {
+func withSecret(t *testing.T, store *secretsservice.OwnStoreService, name entity.SecretName, payload []byte) {
 	t.Helper()
 	ctx := context.Background()
 	require.NoError(t, store.Create(ctx, name, entity.Metadata{}), "create")
@@ -137,7 +137,7 @@ func TestVersionsAccumulateAndTheLatestWins(t *testing.T) {
 	versions, err := store.Versions(ctx, "db-creds")
 	require.NoError(t, err)
 	require.Len(t, versions, 2)
-	assert.Equal(t, "2", versions[0].ID, "newest first")
+	assert.Equal(t, entity.VersionID("2"), versions[0].ID, "newest first")
 	assert.Equal(t, entity.VersionEnabled, versions[0].State)
 }
 
@@ -156,7 +156,7 @@ func TestASecretReportsItsLatestVersion(t *testing.T) {
 	require.NoError(t, err)
 	got, err := store.Get(ctx, "db-creds")
 	require.NoError(t, err)
-	assert.Equal(t, "1", got.LatestVersion)
+	assert.Equal(t, entity.VersionID("1"), got.LatestVersion)
 }
 
 func TestAStoredVersionSealedUnderARetiredKeyStillOpens(t *testing.T) {

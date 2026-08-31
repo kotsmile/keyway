@@ -11,6 +11,7 @@ import (
 	"github.com/lib/pq"
 
 	"github.com/kotsmile/keyway/internal/identity/entity"
+	identityservice "github.com/kotsmile/keyway/internal/identity/service"
 )
 
 // PostgresIdentityRepo is what keyway remembers about a person between
@@ -33,12 +34,10 @@ func NewPostgresIdentityRepo(db *sqlx.DB) *PostgresIdentityRepo {
 
 // Remember records a sign-in.
 func (r *PostgresIdentityRepo) Remember(ctx context.Context, user *entity.RememberedUser) error {
-	groups := user.Groups
-	if groups == nil {
-		// The column is NOT NULL and the Rust server could never write NULL
-		// here; a nil slice must land as '{}', not as NULL.
-		groups = []string{}
-	}
+	// The column is NOT NULL and the Rust server could never write NULL here;
+	// a nil slice must land as '{}', not as NULL. GroupWords never returns
+	// nil, so this holds by construction.
+	groups := entity.GroupWords(user.Groups)
 	// Groups are REPLACED rather than merged. A person removed from a team
 	// must lose it on their next sign-in; a merge would mean membership only
 	// ever grew.
@@ -50,7 +49,7 @@ func (r *PostgresIdentityRepo) Remember(ctx context.Context, user *entity.Rememb
 		     email = EXCLUDED.email,
 		     name = EXCLUDED.name,
 		     last_login = EXCLUDED.last_login`,
-		user.Handle, pq.Array(groups), user.Email, user.Name, user.LastLogin)
+		user.Handle.String(), pq.Array(groups), user.Email, user.Name, user.LastLogin)
 	if err != nil {
 		return fmt.Errorf("remembering a sign-in: %w", err)
 	}
@@ -58,17 +57,27 @@ func (r *PostgresIdentityRepo) Remember(ctx context.Context, user *entity.Rememb
 }
 
 // Recall is what was remembered, or nil if they have never signed in.
-func (r *PostgresIdentityRepo) Recall(ctx context.Context, handle string) (*entity.RememberedUser, error) {
+func (r *PostgresIdentityRepo) Recall(
+	ctx context.Context, handle entity.Handle,
+) (*entity.RememberedUser, error) {
 	user := entity.RememberedUser{Handle: handle}
+	// The column holds text; the group names are put back on here, which is
+	// this package's whole job. A row written before a name was required
+	// could carry an empty entry, and dropping it is the same reading the
+	// claim edge gives one.
+	var groups []string
 	err := r.db.QueryRowContext(ctx,
 		`SELECT groups, email, name, last_login FROM users WHERE handle = $1`,
-		handle,
-	).Scan(pq.Array(&user.Groups), &user.Email, &user.Name, &user.LastLogin)
+		handle.String(),
+	).Scan(pq.Array(&groups), &user.Email, &user.Name, &user.LastLogin)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("recalling a user: %w", err)
 	}
+	user.Groups, _ = entity.GroupNamesOf(groups)
 	return &user, nil
 }
+
+var _ identityservice.Repo = (*PostgresIdentityRepo)(nil)

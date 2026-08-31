@@ -20,7 +20,7 @@ func now() time.Time {
 }
 
 func alice() identity.Actor {
-	return identity.NewActor("alice", []string{"SRE"}, nil)
+	return identity.NewActor("alice", []identity.GroupName{"SRE"}, nil)
 }
 
 func grant(subject entity.Subject, level entity.Level) entity.Delegation {
@@ -84,7 +84,7 @@ func TestAGrantToATeamTheCallerIsNotInOpensNothing(t *testing.T) {
 func TestAPersonAndATeamOfTheSameNameAreNotConfused(t *testing.T) {
 	// The scenario ADR-0003 exists for. `bob` the person is not in the claim;
 	// `bob` the team is. A grant to the person must not reach the member.
-	bobTheTeamMember := identity.NewActor("carol", []string{"bob"}, nil)
+	bobTheTeamMember := identity.NewActor("carol", []identity.GroupName{"bob"}, nil)
 	toThePerson := []entity.Delegation{grant(entity.User("bob"), entity.Write)}
 	assert.False(t, entity.Resolve(bobTheTeamMember, nil, toThePerson, now()).IsVisible())
 

@@ -19,9 +19,7 @@ import (
 	"github.com/kotsmile/keyway/config"
 	accessentity "github.com/kotsmile/keyway/internal/access/entity"
 	auditentity "github.com/kotsmile/keyway/internal/audit/entity"
-	identityentity "github.com/kotsmile/keyway/internal/identity/entity"
 	secretsentity "github.com/kotsmile/keyway/internal/secrets/entity"
-	secretsservice "github.com/kotsmile/keyway/internal/secrets/service"
 )
 
 // mountSecrets registers the inventory's routes on the authenticated API router.
@@ -40,12 +38,12 @@ func mountSecrets(api chi.Router, state *State) {
 // SecretView is a secret as the API reports it: addressed by uuid, and
 // carrying how far this caller gets.
 type SecretView struct {
-	ID            uuid.UUID              `json:"id"`
-	Store         string                 `json:"store"`
-	Name          string                 `json:"name"`
-	Labels        secretsentity.Metadata `json:"labels,omitempty"`
-	LatestVersion string                 `json:"latest_version,omitempty"`
-	Level         *accessentity.Level    `json:"level"`
+	ID            uuid.UUID                `json:"id"`
+	Store         secretsentity.StoreID    `json:"store"`
+	Name          secretsentity.SecretName `json:"name"`
+	Labels        secretsentity.Metadata   `json:"labels,omitempty"`
+	LatestVersion secretsentity.VersionID  `json:"latest_version,omitempty"`
+	Level         *accessentity.Level      `json:"level"`
 	// Basis is why this caller can see it — an owner needs to know they are
 	// one.
 	Basis string `json:"basis"`
@@ -81,9 +79,9 @@ func basisWire(basis accessentity.Basis) string {
 
 // StoreView is one mounted Store, as the console's menu shows it.
 type StoreView struct {
-	ID    string        `json:"id"`
-	Title string        `json:"title"`
-	Allow []config.Verb `json:"allow"`
+	ID    secretsentity.StoreID `json:"id"`
+	Title string                `json:"title"`
+	Allow []config.Verb         `json:"allow"`
 }
 
 func listStores(state *State) func(http.ResponseWriter, *http.Request) error {
@@ -134,51 +132,9 @@ func listSecrets(state *State) func(http.ResponseWriter, *http.Request) error {
 	}
 }
 
-// secretID reads the uuid a route addresses. The Rust Path<Uuid> extractor
-// answered 400 for anything else — a name is not an address.
-func secretID(r *http.Request) (uuid.UUID, error) {
-	id, err := uuid.Parse(chi.URLParam(r, "id"))
-	if err != nil {
-		return uuid.Nil, BadRequest("the id must be a uuid")
-	}
-	return id, nil
-}
-
-// resolve finds the secret a uuid names, and how far this caller gets on it.
-//
-// Returns not-found both for a secret that does not exist and for one this
-// caller may not see: a distinguishable answer would let anyone enumerate the
-// inventory.
-func resolve(
-	r *http.Request, state *State, actor identityentity.Actor, id uuid.UUID,
-) (*secretsservice.Store, secretsentity.Secret, accessentity.Access, error) {
-	ctx := r.Context()
-	now := state.Now()
-	for _, store := range state.Stores.All() {
-		listed, err := store.List(ctx)
-		if err != nil {
-			continue
-		}
-		for _, secret := range listed {
-			if secretsentity.IDFor(secret) != id {
-				continue
-			}
-			access, err := state.Access.AccessFor(ctx, actor, secret.Store, secret.Name, now)
-			if err != nil {
-				return nil, secretsentity.Secret{}, accessentity.Access{}, Internal(err)
-			}
-			if !access.IsVisible() {
-				return nil, secretsentity.Secret{}, accessentity.Access{}, NotFound()
-			}
-			return store, secret, access, nil
-		}
-	}
-	return nil, secretsentity.Secret{}, accessentity.Access{}, NotFound()
-}
-
 func view(state *State) func(http.ResponseWriter, *http.Request) error {
 	return func(w http.ResponseWriter, r *http.Request) error {
-		id, err := secretID(r)
+		id, err := uuidParam(r, "id")
 		if err != nil {
 			return err
 		}
@@ -197,14 +153,17 @@ func reveal(state *State) func(http.ResponseWriter, *http.Request) error {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		ctx := r.Context()
 		actor := Caller(ctx)
-		id, err := secretID(r)
+		id, err := uuidParam(r, "id")
 		if err != nil {
 			return err
 		}
 		query := r.URL.Query()
 		// `?key=` present-but-empty still narrows, the way Some("") did.
 		key, hasKey := query.Get("key"), query.Has("key")
-		version := query.Get("version")
+		// A version id is opaque — only its Store can say what one means —
+		// so this is a conversion at the edge and not a parse: the backend
+		// answers "no such version" for anything it did not issue.
+		version := secretsentity.VersionID(query.Get("version"))
 
 		store, secret, access, err := resolve(r, state, actor, id)
 		if err != nil {
@@ -225,7 +184,7 @@ func reveal(state *State) func(http.ResponseWriter, *http.Request) error {
 		}
 
 		recordedVersion := version
-		if recordedVersion == "" {
+		if recordedVersion.IsLatest() {
 			recordedVersion = secret.LatestVersion
 		}
 		record := auditentity.NewRecord(auditentity.Reveal, id, secret.Store, secret.Name).
@@ -313,18 +272,38 @@ func create(state *State) func(http.ResponseWriter, *http.Request) error {
 		if !actor.MayCreate() {
 			return Forbidden()
 		}
-		store := state.Stores.Get(*body.Store)
+
+		// The request's strings become the domain's identifiers here, at the
+		// edge, and everything below this line is typed.
+		//
+		// A store id that is not one resolves to no Store, which is the same
+		// 404 an unknown id has always earned: a response must not teach a
+		// caller which Stores exist. A name that is not one is returned as
+		// the secrets domain's own InvalidNameError, which the error mapping
+		// answers exactly as it did when keyway's own Store raised it from
+		// underneath — changing that status is a wire decision, and this pass
+		// does not make wire decisions.
+		storeID, err := secretsentity.NewStoreID(*body.Store)
+		if err != nil {
+			return NotFound()
+		}
+		name, err := secretsentity.NewSecretName(*body.Name)
+		if err != nil {
+			return err
+		}
+
+		store := state.Stores.Get(storeID)
 		if store == nil {
 			return NotFound()
 		}
 
 		labels := secretsentity.Metadata{
-			secretsentity.IDLabel: secretsentity.Derive(*body.Store, *body.Name).String(),
+			secretsentity.IDLabel: secretsentity.Derive(storeID, name).String(),
 		}
-		if err := store.Create(ctx, *body.Name, labels); err != nil {
+		if err := store.Create(ctx, name, labels); err != nil {
 			return err
 		}
-		version, err := store.AddVersion(ctx, *body.Name, []byte(*body.Value))
+		version, err := store.AddVersion(ctx, name, []byte(*body.Value))
 		if err != nil {
 			return err
 		}
@@ -332,8 +311,8 @@ func create(state *State) func(http.ResponseWriter, *http.Request) error {
 		// Ownership before audit: a secret with no owner is one nobody is
 		// answerable for, and the window should be as short as possible.
 		if err := state.Access.SetOwner(ctx, accessentity.Ownership{
-			Store:  *body.Store,
-			Secret: *body.Name,
+			Store:  storeID,
+			Secret: name,
 			Owner:  actor.Handle(),
 			Since:  state.Now(),
 		}); err != nil {
@@ -343,17 +322,17 @@ func create(state *State) func(http.ResponseWriter, *http.Request) error {
 		// A fresh secret's uuid is the derived one — creation stamped it as
 		// the keyway-id label just above.
 		record := auditentity.NewRecord(
-			auditentity.Create, secretsentity.Derive(*body.Store, *body.Name), *body.Store, *body.Name,
+			auditentity.Create, secretsentity.Derive(storeID, name), storeID, name,
 		).WithVersion(version.ID).WithNote(body.Note)
 		if err := state.Audit.Record(ctx, actor, record); err != nil {
 			return Internal(err)
 		}
 
-		secret, err := store.Get(ctx, *body.Name)
+		secret, err := store.Get(ctx, name)
 		if err != nil {
 			return err
 		}
-		access, err := state.Access.AccessFor(ctx, actor, *body.Store, *body.Name, state.Now())
+		access, err := state.Access.AccessFor(ctx, actor, storeID, name, state.Now())
 		if err != nil {
 			return Internal(err)
 		}
@@ -372,7 +351,7 @@ func patch(state *State) func(http.ResponseWriter, *http.Request) error {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		ctx := r.Context()
 		actor := Caller(ctx)
-		id, err := secretID(r)
+		id, err := uuidParam(r, "id")
 		if err != nil {
 			return err
 		}
@@ -410,7 +389,7 @@ func patch(state *State) func(http.ResponseWriter, *http.Request) error {
 
 func versions(state *State) func(http.ResponseWriter, *http.Request) error {
 	return func(w http.ResponseWriter, r *http.Request) error {
-		id, err := secretID(r)
+		id, err := uuidParam(r, "id")
 		if err != nil {
 			return err
 		}
@@ -429,7 +408,7 @@ func versions(state *State) func(http.ResponseWriter, *http.Request) error {
 
 func history(state *State) func(http.ResponseWriter, *http.Request) error {
 	return func(w http.ResponseWriter, r *http.Request) error {
-		id, err := secretID(r)
+		id, err := uuidParam(r, "id")
 		if err != nil {
 			return err
 		}
@@ -452,7 +431,7 @@ func deleteSecret(state *State) func(http.ResponseWriter, *http.Request) error {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		ctx := r.Context()
 		actor := Caller(ctx)
-		id, err := secretID(r)
+		id, err := uuidParam(r, "id")
 		if err != nil {
 			return err
 		}

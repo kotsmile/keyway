@@ -34,7 +34,6 @@ import (
 	accessservice "github.com/kotsmile/keyway/internal/access/service"
 	auditinfra "github.com/kotsmile/keyway/internal/audit/infra"
 	auditservice "github.com/kotsmile/keyway/internal/audit/service"
-	identityentity "github.com/kotsmile/keyway/internal/identity/entity"
 	identityinfra "github.com/kotsmile/keyway/internal/identity/infra"
 	identityservice "github.com/kotsmile/keyway/internal/identity/service"
 	"github.com/kotsmile/keyway/internal/postgres"
@@ -113,8 +112,6 @@ func serve(ctx context.Context, cfg config.Config) error {
 		defer cancel()
 		tel.Shutdown(flushCtx)
 	}()
-	// Every Store call reports through the metrics, from boot onward.
-	secretsservice.ObserveBackendCall = tel.BackendCall
 
 	db, err := postgres.Connect(ctx, cfg.Postgres)
 	if err != nil {
@@ -128,37 +125,49 @@ func serve(ctx context.Context, cfg config.Config) error {
 
 	// Without a Directory, a token's groups are what keyway remembered at its
 	// holder's last sign-in, and deleting a token is the only revocation.
+	//
+	// The config type is a closed list, so an unknown word was already
+	// refused when the file was read; the switch here is over what this build
+	// can construct, and the default is the compiler's reminder to add a case
+	// when a kind is added.
 	var directory identityservice.Directory
 	switch cfg.Oidc.Directory {
-	case "":
-	case "keycloak":
+	case config.DirectoryNone:
+	case config.DirectoryKeycloak:
 		keycloak, err := identityinfra.NewKeycloakDirectory(
 			cfg.Oidc.Issuer, cfg.Oidc.ClientID, cfg.Oidc.ClientSecret)
 		if err != nil {
 			return err
 		}
-		directory = keycloak
+		// The staleness window is the identity domain's policy; the Keycloak
+		// client itself asks the realm every time it is called.
+		directory = identityservice.NewCachedDirectory(
+			keycloak, identityservice.DefaultStaleness, time.Now)
+		slog.Info("directory configured; token holders are checked live",
+			"staleness", identityservice.DefaultStaleness)
 	default:
-		return fmt.Errorf(
-			"oidc.directory names an unknown kind %q; this build has: keycloak",
-			cfg.Oidc.Directory)
-	}
-	if directory != nil {
-		slog.Info("directory configured; token holders are checked live")
+		return &config.UnknownDirectoryError{Kind: string(cfg.Oidc.Directory)}
 	}
 	identityService := identityservice.NewService(identityinfra.NewPostgresIdentityRepo(db), directory)
 
 	// Discovered at boot: a console that only reaches its issuer when somebody
 	// tries to sign in is one that looks healthy while being unusable.
-	var oidc *identityinfra.Oidc
+	//
+	// The interface is left nil when there is no issuer, rather than holding
+	// a nil *Oidc: a typed nil inside an interface is not nil, and every
+	// sign-in route decides dev mode by comparing this against nil.
+	var issuer identityservice.Issuer
 	if cfg.Oidc.Issuer != "" {
-		oidc, err = identityinfra.Discover(ctx, cfg.Oidc)
+		discovered, err := identityinfra.Discover(ctx, cfg.Oidc)
 		if err != nil {
 			return err
 		}
+		issuer = discovered
 	}
 
-	stores, err := mountStores(ctx, cfg, db)
+	// Every Store call reports through the metrics, passed in by name like
+	// every other dependency.
+	stores, err := mountStores(ctx, cfg, db, tel.BackendCall)
 	if err != nil {
 		return err
 	}
@@ -172,11 +181,16 @@ func serve(ctx context.Context, cfg config.Config) error {
 	// Dev mode is on precisely when no issuer is configured. Every
 	// authorisation decision is still made, so a local run behaves like
 	// production minus the redirect.
-	var dev *keywayhttp.DevActor
-	if oidc == nil {
-		dev = devActor(cfg)
+	//
+	// Which words in dev_roles name a role is the identity domain's
+	// judgement, not this file's: NewDevActor keeps the unknown ones out and
+	// says so out loud.
+	var dev *identityservice.DevActor
+	if issuer == nil {
+		parsed := identityservice.NewDevActor(cfg.Oidc.DevUser, cfg.Oidc.DevRoles, cfg.Oidc.DevGroups)
+		dev = &parsed
 		slog.Warn("no issuer configured; serving as the dev user with no authentication",
-			"user", dev.Handle)
+			"user", dev.Handle.String())
 	}
 
 	state := &keywayhttp.State{
@@ -192,7 +206,7 @@ func serve(ctx context.Context, cfg config.Config) error {
 			Codec:    codec,
 		},
 		Branding:     cfg.Branding,
-		Oidc:         oidc,
+		Oidc:         issuer,
 		SessionHours: cfg.Oidc.SessionHours,
 		Codec:        codec,
 	}
@@ -264,21 +278,6 @@ func sessionCodec(cfg config.Config) (*keywayhttp.Codec, error) {
 	return keywayhttp.NewCodec(raw)
 }
 
-// devActor is who a local run acts as, from the dev_* config.
-func devActor(cfg config.Config) *keywayhttp.DevActor {
-	handle := cfg.Oidc.DevUser
-	if handle == "" {
-		handle = "dev"
-	}
-	roles := make([]identityentity.Role, 0, len(cfg.Oidc.DevRoles))
-	for _, word := range cfg.Oidc.DevRoles {
-		if role, known := identityentity.ParseRole(word); known {
-			roles = append(roles, role)
-		}
-	}
-	return &keywayhttp.DevActor{Handle: handle, Roles: roles, Groups: cfg.Oidc.DevGroups}
-}
-
 // normalise: `:8080` is how a config spells "every interface", which the Rust
 // server bound as 0.0.0.0. Go would accept the bare form, but binding what
 // Rust bound keeps a deployment's firewall assumptions intact.
@@ -291,71 +290,78 @@ func normalise(address string) string {
 
 // mountStores builds every Store the config declares.
 //
-// A Store whose adapter this build does not know is worth refusing to start
-// over: silently serving four of five declared Stores is worse than not
-// starting, because nobody notices the fifth is missing.
-func mountStores(ctx context.Context, cfg config.Config, db *sqlx.DB) (*secretsservice.Registry, error) {
+// Each case reads the settings ITS kind needs, through config's typed
+// getters: the `.(string)` assertions and the hand-rolled "needs a `project`"
+// sentences that used to be inline here were configuration decoding wearing a
+// switch statement, and they belong with the rest of the config schema.
+//
+// A Store whose adapter this build does not know never reaches here — the
+// config refuses the word — but the default case stands, because a kind added
+// to config and not to this switch is exactly the mistake worth failing the
+// process over: silently serving four of five declared Stores is worse than
+// not starting, since nobody notices the fifth is missing.
+func mountStores(
+	ctx context.Context, cfg config.Config, db *sqlx.DB, observe secretsservice.BackendObserver,
+) (*secretsservice.Registry, error) {
 	mounted := make([]*secretsservice.Store, 0, len(cfg.Stores))
 	for _, declared := range cfg.Stores {
-		setting := func(name string) (string, bool) {
-			value, ok := declared.Settings[name].(string)
-			return value, ok
-		}
 		var manager secretsentity.SecretManager
 		switch declared.Kind {
-		case "keyway":
+		case config.KindKeyway:
 			keyring, err := secretsservice.KeyringFor(declared)
 			if err != nil {
 				return nil, err
 			}
 			manager = secretsservice.NewOwnStoreService(
 				declared.ID, secretsinfra.NewPostgresOwnStoreRepo(db), keyring)
-		case "gcp":
-			project, ok := setting("project")
-			if !ok {
-				return nil, fmt.Errorf("store %q needs a `project`", declared.ID)
+		case config.KindGcp:
+			settings, err := declared.GcpSettings()
+			if err != nil {
+				return nil, err
 			}
-			gcp, err := secretsinfra.NewGcpSecretManager(ctx, project)
+			gcp, err := secretsinfra.NewGcpSecretManager(ctx, settings.Project)
 			if err != nil {
 				return nil, err
 			}
 			manager = gcp
-		case "yc":
-			folder, ok := setting("folder")
-			if !ok {
-				return nil, fmt.Errorf("store %q needs a `folder`", declared.ID)
+		case config.KindYc:
+			settings, err := declared.YcSettings()
+			if err != nil {
+				return nil, err
 			}
-			secret, _ := setting("secret")
-			manager = secretsinfra.NewYcLockbox(folder, secret)
-		case "aws":
-			region, _ := setting("region")
-			aws, err := secretsinfra.NewAwsSecretsManager(ctx, region)
+			manager = secretsinfra.NewYcLockbox(settings.Folder, settings.Secret)
+		case config.KindAws:
+			settings, err := declared.AwsSettings()
+			if err != nil {
+				return nil, err
+			}
+			aws, err := secretsinfra.NewAwsSecretsManager(ctx, settings.Region)
 			if err != nil {
 				return nil, err
 			}
 			manager = aws
-		case "k8s":
-			namespace, ok := setting("namespace")
-			if !ok {
-				return nil, fmt.Errorf("store %q needs a `namespace`", declared.ID)
+		case config.KindK8s:
+			settings, err := declared.K8sSettings()
+			if err != nil {
+				return nil, err
 			}
 			if declared.Select.IsEmpty() {
 				// Not fatal, but a Store showing every service-account token in
 				// a namespace is one nobody wanted.
 				slog.Warn("no `select` on a kubernetes store; "+
-					"every Secret in the namespace will be listed", "store", declared.ID)
+					"every Secret in the namespace will be listed", "store", declared.ID.String())
 			}
-			k8s, err := secretsinfra.NewKubernetesSecrets(namespace)
+			k8s, err := secretsinfra.NewKubernetesSecrets(settings.Namespace)
 			if err != nil {
 				return nil, err
 			}
 			manager = k8s
 		default:
-			return nil, fmt.Errorf(
-				"store %q names an unknown type %q; this build has: keyway, gcp, yc, aws, k8s",
-				declared.ID, declared.Kind)
+			return nil, &config.UnknownStoreKindError{
+				Store: declared.ID.String(), Kind: declared.Kind.String(),
+			}
 		}
-		mounted = append(mounted, secretsservice.NewStore(declared, manager))
+		mounted = append(mounted, secretsservice.NewStore(declared, manager, observe))
 	}
 	return secretsservice.NewRegistry(mounted)
 }

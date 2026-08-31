@@ -18,6 +18,7 @@ import (
 
 	"github.com/kotsmile/keyway/internal/access/entity"
 	accessservice "github.com/kotsmile/keyway/internal/access/service"
+	secrets "github.com/kotsmile/keyway/internal/secrets/entity"
 )
 
 // PostgresAccessRepo stores grants and ownership in keyway's own database.
@@ -62,8 +63,8 @@ func (dto delegationDTO) delegation() (entity.Delegation, error) {
 	}
 	return entity.Delegation{
 		ID:        dto.ID,
-		Store:     dto.Store,
-		Secret:    dto.Secret,
+		Store:     secrets.StoreID(dto.Store),
+		Secret:    secrets.SecretName(dto.Secret),
 		Subject:   subject,
 		Level:     level,
 		Keys:      dto.Keys,
@@ -104,14 +105,16 @@ type ownershipDTO struct {
 }
 
 // GrantsOn reads every grant on one secret.
-func (r *PostgresAccessRepo) GrantsOn(ctx context.Context, store, secret string) ([]entity.Delegation, error) {
+func (r *PostgresAccessRepo) GrantsOn(
+	ctx context.Context, store secrets.StoreID, secret secrets.SecretName,
+) ([]entity.Delegation, error) {
 	var rows []delegationDTO
 	err := r.db.SelectContext(ctx, &rows,
 		`SELECT id, store, secret, subject_kind, subject_id, level, keys,
 		        granted_by, granted_at, expires_at, note
 		 FROM delegations WHERE store = $1 AND secret = $2
 		 ORDER BY granted_at`,
-		store, secret)
+		store.String(), secret.String())
 	if err != nil {
 		return nil, fmt.Errorf("reading grants on a secret: %w", err)
 	}
@@ -119,19 +122,26 @@ func (r *PostgresAccessRepo) GrantsOn(ctx context.Context, store, secret string)
 }
 
 // OwnerOf reads who owns a secret, when anybody does.
-func (r *PostgresAccessRepo) OwnerOf(ctx context.Context, store, secret string) (*entity.Ownership, error) {
+func (r *PostgresAccessRepo) OwnerOf(
+	ctx context.Context, store secrets.StoreID, secret secrets.SecretName,
+) (*entity.Ownership, error) {
 	var row ownershipDTO
 	err := r.db.GetContext(ctx, &row,
 		`SELECT store, secret, owner, since FROM ownership
 		 WHERE store = $1 AND secret = $2`,
-		store, secret)
+		store.String(), secret.String())
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("reading a secret's owner: %w", err)
 	}
-	return &entity.Ownership{Store: row.Store, Secret: row.Secret, Owner: row.Owner, Since: row.Since}, nil
+	return &entity.Ownership{
+		Store:  secrets.StoreID(row.Store),
+		Secret: secrets.SecretName(row.Secret),
+		Owner:  row.Owner,
+		Since:  row.Since,
+	}, nil
 }
 
 // GrantsForSubjects reads every grant addressed to any of `subjects`.
@@ -177,7 +187,7 @@ func (r *PostgresAccessRepo) SaveGrant(ctx context.Context, grant entity.Delegat
 		     granted_at = EXCLUDED.granted_at,
 		     expires_at = EXCLUDED.expires_at,
 		     note = EXCLUDED.note`,
-		grant.ID, grant.Store, grant.Secret, grant.Subject.Kind(), grant.Subject.ID(),
+		grant.ID, grant.Store.String(), grant.Secret.String(), grant.Subject.Kind(), grant.Subject.ID(),
 		grant.Level.String(), textArray(grant.Keys), grant.GrantedBy, grant.GrantedAt,
 		grant.ExpiresAt, grant.Note)
 	if err != nil {
@@ -210,7 +220,7 @@ func (r *PostgresAccessRepo) SetOwner(ctx context.Context, ownership entity.Owne
 		 ON CONFLICT (store, secret) DO UPDATE SET
 		     owner = EXCLUDED.owner,
 		     since = EXCLUDED.since`,
-		ownership.Store, ownership.Secret, ownership.Owner, ownership.Since)
+		ownership.Store.String(), ownership.Secret.String(), ownership.Owner, ownership.Since)
 	if err != nil {
 		return fmt.Errorf("recording ownership: %w", err)
 	}

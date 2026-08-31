@@ -55,7 +55,7 @@ func (s *spy) List(context.Context) ([]entity.Secret, error) {
 	return out, nil
 }
 
-func (s *spy) Get(_ context.Context, name string) (entity.Secret, error) {
+func (s *spy) Get(_ context.Context, name entity.SecretName) (entity.Secret, error) {
 	s.record("get")
 	for _, secret := range s.secrets {
 		if secret.Name == name {
@@ -65,37 +65,37 @@ func (s *spy) Get(_ context.Context, name string) (entity.Secret, error) {
 	return entity.Secret{}, entity.ErrNotFound
 }
 
-func (s *spy) Versions(context.Context, string) ([]entity.Version, error) {
+func (s *spy) Versions(context.Context, entity.SecretName) ([]entity.Version, error) {
 	s.record("versions")
 	return []entity.Version{{ID: "1", State: entity.VersionEnabled}}, nil
 }
 
-func (s *spy) Access(context.Context, string, string) ([]byte, error) {
+func (s *spy) Access(context.Context, entity.SecretName, entity.VersionID) ([]byte, error) {
 	s.record("access")
 	return []byte("payload"), nil
 }
 
-func (s *spy) SetLabels(context.Context, string, entity.Metadata) error {
+func (s *spy) SetLabels(context.Context, entity.SecretName, entity.Metadata) error {
 	s.record("set_labels")
 	return nil
 }
 
-func (s *spy) Create(context.Context, string, entity.Metadata) error {
+func (s *spy) Create(context.Context, entity.SecretName, entity.Metadata) error {
 	s.record("create")
 	return nil
 }
 
-func (s *spy) AddVersion(context.Context, string, []byte) (entity.Version, error) {
+func (s *spy) AddVersion(context.Context, entity.SecretName, []byte) (entity.Version, error) {
 	s.record("add_version")
 	return entity.Version{ID: "2", State: entity.VersionEnabled}, nil
 }
 
-func (s *spy) Delete(context.Context, string) error {
+func (s *spy) Delete(context.Context, entity.SecretName) error {
 	s.record("delete")
 	return nil
 }
 
-func secret(name string, labels map[string]string) entity.Secret {
+func secret(name entity.SecretName, labels map[string]string) entity.Secret {
 	return entity.Secret{
 		Name:          name,
 		Labels:        labels,
@@ -115,7 +115,8 @@ func storeConfig(t *testing.T, text string) config.StoreConfig {
 func mountedWithSpy(t *testing.T, text string, secrets []entity.Secret) (*Store, *spy) {
 	t.Helper()
 	adapter := &spy{secrets: secrets}
-	return NewStore(storeConfig(t, text), adapter), adapter
+	// No observer: these tests are about the fence, not the metrics.
+	return NewStore(storeConfig(t, text), adapter, nil), adapter
 }
 
 func mounted(t *testing.T, text string, secrets []entity.Secret) *Store {
@@ -124,9 +125,12 @@ func mounted(t *testing.T, text string, secrets []entity.Secret) *Store {
 	return store
 }
 
+// The `type` is irrelevant to what these tests assert — the adapter is the
+// spy below — but the config schema refuses a kind no SecretManager answers
+// to, so the fixtures name a real one.
 const (
-	readOnly = "id: prod\ntype: spy\nallow: [read]\n"
-	readEdit = "id: prod\ntype: spy\nallow: [read, edit]\n"
+	readOnly = "id: prod\ntype: keyway\nallow: [read]\n"
+	readEdit = "id: prod\ntype: keyway\nallow: [read, edit]\n"
 )
 
 func TestAVerbTheDeploymentWithheldNeverReachesTheAdapter(t *testing.T) {
@@ -158,7 +162,7 @@ func TestEditingIsNotCreatingAndNotDestroying(t *testing.T) {
 }
 
 func TestSelectNarrowsTheListing(t *testing.T) {
-	text := "id: prod\ntype: spy\nallow: [read]\nselect:\n  labels:\n    keyway: \"true\"\n"
+	text := "id: prod\ntype: keyway\nallow: [read]\nselect:\n  labels:\n    keyway: \"true\"\n"
 	store := mounted(t, text, []entity.Secret{
 		secret("mine", map[string]string{"keyway": "true"}),
 		secret("someone-elses", nil),
@@ -167,12 +171,12 @@ func TestSelectNarrowsTheListing(t *testing.T) {
 	listed, err := store.List(context.Background())
 	require.NoError(t, err)
 	require.Len(t, listed, 1)
-	assert.Equal(t, "mine", listed[0].Name)
+	assert.Equal(t, entity.SecretName("mine"), listed[0].Name)
 }
 
 func TestASecretOutsideSelectIsNotFoundRatherThanRefused(t *testing.T) {
 	// A Store that does not expose something must not confirm it exists.
-	text := "id: prod\ntype: spy\nallow: [read]\nselect:\n  labels:\n    keyway: \"true\"\n"
+	text := "id: prod\ntype: keyway\nallow: [read]\nselect:\n  labels:\n    keyway: \"true\"\n"
 	store := mounted(t, text, []entity.Secret{secret("someone-elses", nil)})
 
 	_, err := store.Get(context.Background(), "someone-elses")
@@ -199,7 +203,7 @@ func TestAReconcilerOwnedSecretIsReadableButNotEditable(t *testing.T) {
 }
 
 func TestProtectionCoversLabelsADeploymentAddedItself(t *testing.T) {
-	text := "id: prod\ntype: spy\nallow: [read, edit]\nprotect:\n  labels:\n    owned-by: terraform\n"
+	text := "id: prod\ntype: keyway\nallow: [read, edit]\nprotect:\n  labels:\n    owned-by: terraform\n"
 	store := mounted(t, text, []entity.Secret{
 		secret("db", map[string]string{"owned-by": "terraform"}),
 	})
@@ -218,26 +222,26 @@ func TestAListingIsStampedWithTheStoreItCameFrom(t *testing.T) {
 
 	listed, err := store.List(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, "prod", listed[0].Store)
+	assert.Equal(t, entity.StoreID("prod"), listed[0].Store)
 
 	got, err := store.Get(ctx, "db")
 	require.NoError(t, err)
-	assert.Equal(t, "prod", got.Store)
+	assert.Equal(t, entity.StoreID("prod"), got.Store)
 }
 
 func TestARegistryKeepsDeclarationOrder(t *testing.T) {
 	var stores []*Store
 	for _, id := range []string{"b", "a", "c"} {
-		stores = append(stores, mounted(t, fmt.Sprintf("id: %s\ntype: spy\nallow: [read]\n", id), nil))
+		stores = append(stores, mounted(t, fmt.Sprintf("id: %s\ntype: keyway\nallow: [read]\n", id), nil))
 	}
 	registry, err := NewRegistry(stores)
 	require.NoError(t, err)
 
-	var ids []string
+	var ids []entity.StoreID
 	for _, store := range registry.All() {
 		ids = append(ids, store.ID())
 	}
-	assert.Equal(t, []string{"b", "a", "c"}, ids, "the config decides what comes first")
+	assert.Equal(t, []entity.StoreID{"b", "a", "c"}, ids, "the config decides what comes first")
 }
 
 func TestARegistryRefusesTwoStoresOnOneID(t *testing.T) {
@@ -255,4 +259,69 @@ func TestAnUnknownStoreIDResolvesToNothing(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, registry.Get("prod"))
 	assert.Nil(t, registry.Get("does-not-exist"))
+}
+
+// ---- the backend observer --------------------------------------------------
+
+func TestEveryBackendCallIsReportedWithABoundedLabelSet(t *testing.T) {
+	// The observer is a dependency of the Store now, not a package-level
+	// variable main assigns: two tests can hold different opinions about it,
+	// and every call site says where it came from.
+	type call struct {
+		store     string
+		operation string
+		outcome   string
+	}
+	var mu sync.Mutex
+	var seen []call
+	observe := func(store, operation, outcome string, seconds float64) {
+		mu.Lock()
+		defer mu.Unlock()
+		assert.GreaterOrEqual(t, seconds, 0.0)
+		seen = append(seen, call{store, operation, outcome})
+	}
+
+	mounted := NewStore(storeConfig(t, readEdit),
+		&spy{secrets: []entity.Secret{secret("db", nil)}}, observe)
+	ctx := context.Background()
+	_, err := mounted.List(ctx)
+	require.NoError(t, err)
+	_, err = mounted.AddVersion(ctx, "db", []byte("new"))
+	require.NoError(t, err)
+
+	mu.Lock()
+	defer mu.Unlock()
+	// The labels are the Store id and a fixed operation word — never a
+	// secret's name, which would both explode cardinality and publish the
+	// inventory to whoever can reach /metrics.
+	assert.Contains(t, seen, call{"prod", "list", "ok"})
+	assert.Contains(t, seen, call{"prod", "add_version", "ok"})
+	for _, c := range seen {
+		assert.Equal(t, "prod", c.store)
+		assert.NotEqual(t, "db", c.operation)
+		assert.NotEqual(t, "db", c.outcome)
+	}
+}
+
+func TestARefusalIsNotABackendCall(t *testing.T) {
+	// `allow` is checked before the adapter is reached, so a refused verb
+	// must not show up as backend latency.
+	var calls int
+	observe := func(string, string, string, float64) { calls++ }
+	mounted := NewStore(storeConfig(t, readOnly), &spy{}, observe)
+
+	err := mounted.Create(context.Background(), "db", entity.Metadata{})
+	var notAllowed *NotAllowedError
+	require.ErrorAs(t, err, &notAllowed)
+	assert.Zero(t, calls, "nothing reached the backend, so nothing was timed")
+}
+
+func TestAStoreWithNoObserverStillServes(t *testing.T) {
+	// Metrics are an option, not a requirement: a Store mounted without one
+	// behaves identically. This is also every other test in this file.
+	mounted := NewStore(storeConfig(t, readOnly),
+		&spy{secrets: []entity.Secret{secret("db", nil)}}, nil)
+	listed, err := mounted.List(context.Background())
+	require.NoError(t, err)
+	assert.Len(t, listed, 1)
 }

@@ -30,32 +30,39 @@ type SecretManager interface {
 	// List is every secret's metadata, no payloads. This is the first screen
 	// of the app, so an implementation should page through the backend rather
 	// than fan out a request per secret.
+	//
+	// An adapter leaves Secret.Store unset: it has no reason to know its own
+	// Store id, and the Store stamps every listing with it.
 	List(ctx context.Context) ([]Secret, error)
 
 	// Get is one secret's metadata.
-	Get(ctx context.Context, name string) (Secret, error)
+	Get(ctx context.Context, name SecretName) (Secret, error)
 
 	// Versions is the revision series, newest first.
-	Versions(ctx context.Context, name string) ([]Version, error)
+	Versions(ctx context.Context, name SecretName) ([]Version, error)
 
 	// Access is one version's payload. An empty version means the latest.
-	Access(ctx context.Context, name, version string) ([]byte, error)
+	//
+	// The name and the version are separate types on purpose: this is the
+	// signature where passing them the wrong way round would read a value
+	// under an id nobody asked for.
+	Access(ctx context.Context, name SecretName, version VersionID) ([]byte, error)
 
 	// SetLabels replaces a secret's labels with the map given — replace
 	// rather than merge, because that is what the backends offer. The caller
 	// merges.
-	SetLabels(ctx context.Context, name string, labels Metadata) error
+	SetLabels(ctx context.Context, name SecretName, labels Metadata) error
 
 	// Create makes an empty secret. Split from AddVersion because that is the
 	// backends' own shape, and because it lets a create fail on "already
 	// exists" without having first written a payload somewhere.
-	Create(ctx context.Context, name string, labels Metadata) error
+	Create(ctx context.Context, name SecretName, labels Metadata) error
 
 	// AddVersion writes a new revision and returns it.
-	AddVersion(ctx context.Context, name string, payload []byte) (Version, error)
+	AddVersion(ctx context.Context, name SecretName, payload []byte) (Version, error)
 
 	// Delete removes the secret and every version of it.
-	Delete(ctx context.Context, name string) error
+	Delete(ctx context.Context, name SecretName) error
 }
 
 // ErrNotFound is no such secret. Kept distinct from every other failure
@@ -65,16 +72,16 @@ var ErrNotFound = errors.New("no such secret")
 
 // NoSuchVersionError is a secret that exists but a version that does not.
 type NoSuchVersionError struct {
-	Version string
+	Version VersionID
 }
 
 func (e *NoSuchVersionError) Error() string {
-	return fmt.Sprintf("no such version %q", e.Version)
+	return fmt.Sprintf("no such version %q", e.Version.String())
 }
 
 // InvalidNameError is a name the backend will not accept.
 type InvalidNameError struct {
-	Name   string
+	Name   SecretName
 	Reason string
 }
 

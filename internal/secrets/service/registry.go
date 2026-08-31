@@ -1,33 +1,37 @@
 package service
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/kotsmile/keyway/internal/secrets/entity"
+)
 
 // Registry is every configured Store, in declaration order.
 //
 // Declaration order is the order the console lists them in, so the config
 // file decides what a person sees first.
 type Registry struct {
-	order []string
-	byID  map[string]*Store
+	order []entity.StoreID
+	byID  map[entity.StoreID]*Store
 }
 
 // DuplicateStoreError is two Stores answering to one id, which makes every
 // grant written against it ambiguous — worth failing the process over rather
 // than resolving arbitrarily.
 type DuplicateStoreError struct {
-	ID string
+	ID entity.StoreID
 }
 
 func (e *DuplicateStoreError) Error() string {
-	return fmt.Sprintf("duplicate store id %q", e.ID)
+	return fmt.Sprintf("duplicate store id %q", e.ID.String())
 }
 
 // NewRegistry indexes the Stores.
 //
 // It fails when two Stores share an id.
 func NewRegistry(stores []*Store) (*Registry, error) {
-	order := make([]string, 0, len(stores))
-	byID := make(map[string]*Store, len(stores))
+	order := make([]entity.StoreID, 0, len(stores))
+	byID := make(map[entity.StoreID]*Store, len(stores))
 	for _, store := range stores {
 		id := store.ID()
 		if _, taken := byID[id]; taken {
@@ -44,7 +48,7 @@ func NewRegistry(stores []*Store) (*Registry, error) {
 // It returns nil for an unknown one; the caller reports that the same way it
 // reports an unknown secret, so a URL cannot be used to learn which Stores
 // exist.
-func (r *Registry) Get(id string) *Store {
+func (r *Registry) Get(id entity.StoreID) *Store {
 	return r.byID[id]
 }
 

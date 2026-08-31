@@ -143,7 +143,7 @@ func (a *AwsSecretsManager) List(ctx context.Context) ([]entity.Secret, error) {
 				continue
 			}
 			out = append(out, entity.Secret{
-				Name:   *entry.Name,
+				Name:   entity.SecretName(*entry.Name),
 				Labels: tagsToMetadata(entry.Tags),
 				// AWS does not report a version id in a listing, and
 				// resolving one costs a call per secret.
@@ -154,9 +154,9 @@ func (a *AwsSecretsManager) List(ctx context.Context) ([]entity.Secret, error) {
 }
 
 // Get implements entity.SecretManager.
-func (a *AwsSecretsManager) Get(ctx context.Context, name string) (entity.Secret, error) {
+func (a *AwsSecretsManager) Get(ctx context.Context, name entity.SecretName) (entity.Secret, error) {
 	described, err := a.client.DescribeSecret(ctx, &secretsmanager.DescribeSecretInput{
-		SecretId: awssdk.String(name),
+		SecretId: awssdk.String(name.String()),
 	})
 	if err != nil {
 		return entity.Secret{}, awsError("reading an aws secret", err)
@@ -164,18 +164,18 @@ func (a *AwsSecretsManager) Get(ctx context.Context, name string) (entity.Secret
 
 	// The stage map is version id → stages, so the current one is found by
 	// looking for the label rather than by ordering.
-	current := ""
+	var current entity.VersionID
 	for id, stages := range described.VersionIdsToStages {
 		for _, stage := range stages {
 			if stage == awsCurrent {
-				current = id
+				current = entity.VersionID(id)
 			}
 		}
 	}
 
 	describedName := name
 	if described.Name != nil {
-		describedName = *described.Name
+		describedName = entity.SecretName(*described.Name)
 	}
 	return entity.Secret{
 		Name:          describedName,
@@ -185,9 +185,9 @@ func (a *AwsSecretsManager) Get(ctx context.Context, name string) (entity.Secret
 }
 
 // Versions implements entity.SecretManager.
-func (a *AwsSecretsManager) Versions(ctx context.Context, name string) ([]entity.Version, error) {
+func (a *AwsSecretsManager) Versions(ctx context.Context, name entity.SecretName) ([]entity.Version, error) {
 	listed, err := a.client.ListSecretVersionIds(ctx, &secretsmanager.ListSecretVersionIdsInput{
-		SecretId:          awssdk.String(name),
+		SecretId:          awssdk.String(name.String()),
 		IncludeDeprecated: awssdk.Bool(true),
 	})
 	if err != nil {
@@ -210,7 +210,7 @@ func (a *AwsSecretsManager) Versions(ctx context.Context, name string) ([]entity
 		versions = append(versions, dated{
 			created: created,
 			version: entity.Version{
-				ID:    *v.VersionId,
+				ID:    entity.VersionID(*v.VersionId),
 				State: awsStateOf(v.VersionStages),
 			},
 		})
@@ -227,10 +227,10 @@ func (a *AwsSecretsManager) Versions(ctx context.Context, name string) ([]entity
 }
 
 // Access implements entity.SecretManager.
-func (a *AwsSecretsManager) Access(ctx context.Context, name, version string) ([]byte, error) {
-	input := &secretsmanager.GetSecretValueInput{SecretId: awssdk.String(name)}
-	if version != "" {
-		input.VersionId = awssdk.String(version)
+func (a *AwsSecretsManager) Access(ctx context.Context, name entity.SecretName, version entity.VersionID) ([]byte, error) {
+	input := &secretsmanager.GetSecretValueInput{SecretId: awssdk.String(name.String())}
+	if !version.IsLatest() {
+		input.VersionId = awssdk.String(version.String())
 	} else {
 		// Explicit rather than implied: the default is AWSCURRENT anyway, but
 		// saying so is what makes the mapping legible.
@@ -247,9 +247,9 @@ func (a *AwsSecretsManager) Access(ctx context.Context, name, version string) ([
 // SetLabels implements entity.SecretManager. It replaces the tags, which is
 // what the interface promises — so tags AWS holds and the caller did not
 // send are removed.
-func (a *AwsSecretsManager) SetLabels(ctx context.Context, name string, labels entity.Metadata) error {
+func (a *AwsSecretsManager) SetLabels(ctx context.Context, name entity.SecretName, labels entity.Metadata) error {
 	existing, err := a.client.DescribeSecret(ctx, &secretsmanager.DescribeSecretInput{
-		SecretId: awssdk.String(name),
+		SecretId: awssdk.String(name.String()),
 	})
 	if err != nil {
 		return awsError("reading an aws secret's tags", err)
@@ -263,7 +263,7 @@ func (a *AwsSecretsManager) SetLabels(ctx context.Context, name string, labels e
 	}
 	if len(stale) > 0 {
 		if _, err := a.client.UntagResource(ctx, &secretsmanager.UntagResourceInput{
-			SecretId: awssdk.String(name),
+			SecretId: awssdk.String(name.String()),
 			TagKeys:  stale,
 		}); err != nil {
 			return awsError("removing aws tags", err)
@@ -272,7 +272,7 @@ func (a *AwsSecretsManager) SetLabels(ctx context.Context, name string, labels e
 
 	if len(labels) > 0 {
 		if _, err := a.client.TagResource(ctx, &secretsmanager.TagResourceInput{
-			SecretId: awssdk.String(name),
+			SecretId: awssdk.String(name.String()),
 			Tags:     metadataToTags(labels),
 		}); err != nil {
 			return awsError("setting aws tags", err)
@@ -282,9 +282,9 @@ func (a *AwsSecretsManager) SetLabels(ctx context.Context, name string, labels e
 }
 
 // Create implements entity.SecretManager.
-func (a *AwsSecretsManager) Create(ctx context.Context, name string, labels entity.Metadata) error {
+func (a *AwsSecretsManager) Create(ctx context.Context, name entity.SecretName, labels entity.Metadata) error {
 	if _, err := a.client.CreateSecret(ctx, &secretsmanager.CreateSecretInput{
-		Name: awssdk.String(name),
+		Name: awssdk.String(name.String()),
 		Tags: metadataToTags(labels),
 	}); err != nil {
 		return awsError("creating an aws secret", err)
@@ -293,21 +293,21 @@ func (a *AwsSecretsManager) Create(ctx context.Context, name string, labels enti
 }
 
 // AddVersion implements entity.SecretManager.
-func (a *AwsSecretsManager) AddVersion(ctx context.Context, name string, payload []byte) (entity.Version, error) {
+func (a *AwsSecretsManager) AddVersion(ctx context.Context, name entity.SecretName, payload []byte) (entity.Version, error) {
 	// Lossy, like the Rust adapter's from_utf8_lossy: AWS's string field
 	// cannot carry invalid UTF-8, and refusing the whole write over one bad
 	// byte would be worse.
 	written, err := a.client.PutSecretValue(ctx, &secretsmanager.PutSecretValueInput{
-		SecretId:     awssdk.String(name),
+		SecretId:     awssdk.String(name.String()),
 		SecretString: awssdk.String(strings.ToValidUTF8(string(payload), "�")),
 	})
 	if err != nil {
 		return entity.Version{}, awsError("adding an aws secret version", err)
 	}
 
-	id := ""
+	var id entity.VersionID
 	if written.VersionId != nil {
-		id = *written.VersionId
+		id = entity.VersionID(*written.VersionId)
 	}
 	return entity.Version{ID: id, State: entity.VersionEnabled}, nil
 }
@@ -318,9 +318,9 @@ func (a *AwsSecretsManager) AddVersion(ctx context.Context, name string, payload
 // AWS defaults to a recovery window, which sounds safer and is not what a
 // caller of Delete asked for: a scheduled secret still occupies its name, so
 // recreating it fails and the console shows a deletion that did not happen.
-func (a *AwsSecretsManager) Delete(ctx context.Context, name string) error {
+func (a *AwsSecretsManager) Delete(ctx context.Context, name entity.SecretName) error {
 	if _, err := a.client.DeleteSecret(ctx, &secretsmanager.DeleteSecretInput{
-		SecretId:                   awssdk.String(name),
+		SecretId:                   awssdk.String(name.String()),
 		ForceDeleteWithoutRecovery: awssdk.Bool(true),
 	}); err != nil {
 		return awsError("deleting an aws secret", err)
